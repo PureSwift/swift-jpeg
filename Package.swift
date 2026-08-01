@@ -18,6 +18,14 @@ let package = Package(
         // Byte input and output are abstracted behind protocols in
         // `Bytestream.swift` rather than being performed here.
         .target(name: "JPEG"),
+
+        // Tests may import Foundation freely — the no-imports rule applies to
+        // the engine, not to what exercises it.
+        .testTarget(
+            name: "JPEGTests",
+            dependencies: ["JPEG"],
+            resources: [.copy("Images")]
+        ),
     ]
 )
 
