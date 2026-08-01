@@ -51,14 +51,31 @@ extension JPEG.Data.Rectangular {
 }
 
 extension JPEG.Data.Planar {
+    /// Maps an output coordinate to a position in a plane sampled `numerator`
+    /// times for every `denominator` output samples, in Q16 fixed point.
+    ///
+    /// The half-sample terms are what make this an interpolation rather than a
+    /// stretch. A subsampled chroma sample represents the *center* of the area
+    /// it covers, not its corner, so the output grid and the source grid are
+    /// offset by half a source sample. Dropping the offset shifts chroma by
+    /// half a pixel — a subtle error that looks like color fringing on one side
+    /// of every edge.
+    private static func source(_ x: Int, _ numerator: Int, _ denominator: Int) -> Int {
+        (((2 * x + 1) * numerator) << 16) / (2 * denominator) - (1 << 15)
+    }
+
     /// Upsamples and interleaves this image to full resolution.
     ///
-    /// Upsampling replicates: a chroma sample covering a 2×2 luma area is
-    /// copied to all four pixels. That is what the standard's own reference
-    /// decoder does, and it is what makes the operation exactly invertible for
-    /// an image that was never subsampled. Smoother filters exist and produce
-    /// better-looking chroma edges, but they are a rendering choice rather than
-    /// part of decoding, so they do not belong here.
+    /// A component sampled as densely as the frame is copied verbatim. A
+    /// subsampled one is bilinearly interpolated, which for the 2×1 and 2×2
+    /// cases reproduces the triangular filter libjpeg calls "fancy upsampling"
+    /// and enables by default. Matching it matters here: this library is meant
+    /// to stand in for that one, and replication — which is what the standard's
+    /// own reference decoder does — differs from it by up to about 40 counts at
+    /// a sharp chroma edge.
+    ///
+    /// Reads past a plane's edge clamp, so the margins repeat the edge sample
+    /// instead of interpolating toward nothing.
     ///
     /// The block padding each plane carries is dropped at the same time, since
     /// the crop and the scale share an index calculation.
@@ -74,15 +91,41 @@ extension JPEG.Data.Planar {
             let sampling: JPEG.Component.Sampling = component.sampling
             let source: Plane = self.planes[plane]
 
-            // A component sampled at (sx, sy) against a maximum of (mx, my)
-            // contributes one sample per mx/sx pixels horizontally. Multiplying
-            // before dividing keeps this exact for factors that do not divide
-            // evenly, which 3:1 and 4:3 arrangements do not.
+            guard sampling.x != scale.x || sampling.y != scale.y else {
+                // Full resolution. Interpolating would be a no-op in exact
+                // arithmetic but not in fixed point, so take the direct path
+                // and keep the samples bit-exact.
+                for y: Int in 0 ..< height {
+                    for x: Int in 0 ..< width {
+                        values[(y * width + x) * stride + plane] = source[x: x, y: y]
+                    }
+                }
+                continue
+            }
+
             for y: Int in 0 ..< height {
-                let row: Int = y * sampling.y / scale.y
+                let v: Int = Self.source(y, sampling.y, scale.y)
+                // Arithmetic shift floors, including for the negative
+                // coordinates the half-sample offset produces at the top and
+                // left margins, so the fraction stays in 0 ..< 1.
+                let row: Int = v >> 16
+                let fy: Int64 = .init(v - (row << 16))
+
                 for x: Int in 0 ..< width {
-                    let column: Int = x * sampling.x / scale.x
-                    values[(y * width + x) * stride + plane] = source[x: column, y: row]
+                    let u: Int = Self.source(x, sampling.x, scale.x)
+                    let column: Int = u >> 16
+                    let fx: Int64 = .init(u - (column << 16))
+
+                    let a: Int64 = .init(source[x: column, y: row])
+                    let b: Int64 = .init(source[x: column + 1, y: row])
+                    let c: Int64 = .init(source[x: column, y: row + 1])
+                    let d: Int64 = .init(source[x: column + 1, y: row + 1])
+
+                    let top: Int64 = (a << 16) + (b - a) * fx
+                    let bottom: Int64 = (c << 16) + (d - c) * fx
+                    let value: Int64 = ((top << 16) + (bottom - top) * fy + (1 << 31)) >> 32
+
+                    values[(y * width + x) * stride + plane] = .init(value)
                 }
             }
         }
