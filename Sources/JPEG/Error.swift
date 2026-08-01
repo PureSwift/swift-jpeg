@@ -239,6 +239,11 @@ extension JPEG {
         case duplicateFrameHeader
         /// A scan referenced a component the frame header did not declare.
         case undefinedScanComponentReference(JPEG.Component.Key, Set<JPEG.Component.Key>)
+        /// The color format did not recognize the frame's component set.
+        ///
+        /// Only reachable with a custom ``JPEG/Format``. The built-in format
+        /// falls back to a nonconforming case rather than failing.
+        case unrecognizedColorFormat(Set<JPEG.Component.Key>, precision: Int)
         /// A scan referenced a Huffman table slot that had not been defined.
         case undefinedScanHuffmanTableReference(JPEG.Table.Huffman.Key)
         /// A scan referenced a quantization table slot that had not been
@@ -276,6 +281,8 @@ extension JPEG.DecodingError {
             return "duplicate frame header"
         case .undefinedScanComponentReference:
             return "undefined scan component reference"
+        case .unrecognizedColorFormat:
+            return "unrecognized color format"
         case .undefinedScanHuffmanTableReference:
             return "undefined huffman table reference"
         case .undefinedScanQuantizationTableReference:
@@ -301,6 +308,11 @@ extension JPEG.DecodingError {
             return """
                 scan references component \(component), which the frame header did not \
                 declare (declared: \(defined.sorted(by: { $0.value < $1.value })))
+                """
+        case .unrecognizedColorFormat(let components, precision: let precision):
+            return """
+                the color format does not recognize \(components.count) component(s) \
+                (\(components.sorted(by: { $0.value < $1.value }))) at \(precision)-bit precision
                 """
         case .undefinedScanHuffmanTableReference(let key):
             return "scan references huffman table \(key), which has not been defined"
