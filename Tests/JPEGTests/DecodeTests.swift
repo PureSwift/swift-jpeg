@@ -37,6 +37,13 @@ struct DecodeTests {
         // above 1.5 and the maximum near 40, so this threshold is what pins
         // that behavior down.
         .init(name: "subsampled", reference: "subsampled", channels: 3, deviation: 4, mean: 0.20),
+        // 4:2:2 subsamples horizontally only, so it is the case where an
+        // upsampler that confuses its two axes still passes 4:2:0.
+        .init(name: "wide", reference: "wide", channels: 3, deviation: 4, mean: 0.20),
+        // Restart markers every 3 MCUs. Exercises the DC predictor reset and
+        // the phase counter wrapping past 7, which a scan without restarts
+        // never touches.
+        .init(name: "restarts", reference: "restarts", channels: 3, deviation: 4, mean: 0.20),
     ]
 
     private static func resource(_ name: String, _ ext: String) throws -> [UInt8] {
