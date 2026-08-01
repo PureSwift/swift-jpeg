@@ -48,7 +48,10 @@ extension JPEG.Data {
         }
 
         /// The planes, in layout order.
-        public private(set) var planes: [Plane]
+        ///
+        /// Writable within the module so the entropy decoder can fill them in
+        /// place; callers outside it get read-only access.
+        public internal(set) var planes: [Plane]
         /// The image geometry and component structure.
         public private(set) var layout: JPEG.Layout<Format>
         /// The quantization tables in effect, keyed by slot.
