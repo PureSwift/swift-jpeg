@@ -13,7 +13,10 @@ extension JPEG {
         /// The image width, in samples.
         public let width: Int
         /// The image height, in samples.
-        public let height: Int
+        ///
+        /// Settable within the module because a stream may declare zero here
+        /// and supply the real height later in a `DNL` segment.
+        public internal(set) var height: Int
 
         /// The component descriptors, in plane order.
         public let planes: [JPEG.Component]
