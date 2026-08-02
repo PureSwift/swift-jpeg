@@ -25,17 +25,19 @@ extension JPEG {
 extension JPEG.Data.Spectral {
     /// The tables and geometry one scan component needs, resolved once instead
     /// of per block.
-    private struct Resolved {
+    ///
+    /// The tables are optional because a progressive scan only references one
+    /// class: a DC scan never names an AC table, and a stream is free to leave
+    /// the other slot undefined at that point. Requiring both would reject
+    /// perfectly valid files.
+    struct Resolved {
         let plane: Int
         let sampling: JPEG.Component.Sampling
-        let dc: JPEG.Table.Huffman
-        let ac: JPEG.Table.Huffman
+        let dc: JPEG.Table.Huffman?
+        let ac: JPEG.Table.Huffman?
     }
 
-    /// Decodes one sequential scan into this image's coefficients.
-    ///
-    /// Handles the baseline and extended sequential processes. Progressive
-    /// scans are recognized and rejected rather than misdecoded.
+    /// Decodes one scan into this image's coefficients.
     ///
     /// -   Parameters:
     ///     -   ecs: The scan's entropy coded data, raw, as the lexer produced
@@ -49,17 +51,38 @@ extension JPEG.Data.Spectral {
         tables: JPEG.Tables,
         restartInterval: Int
     ) throws {
-        guard !self.layout.process.isProgressive else {
-            throw JPEG.DecodingError.unsupportedProcess(self.layout.process)
+        let process: JPEG.Process = self.layout.process
+        guard case .huffman = process.coding else {
+            throw JPEG.DecodingError.unsupportedProcess(process)
         }
 
+        let kind: JPEG.Header.Scan.Kind = scan.kind(process: process)
         let planes: [Int] = try self.layout.validate(scan: scan)
+
+        // Resolve only the tables this kind of scan actually reads, so an
+        // undefined slot the scan never names is not an error.
+        let needsDC: Bool
+        let needsAC: Bool
+        switch kind {
+        case .sequential:           (needsDC, needsAC) = (true, true)
+        case .dc(refining: let r):  (needsDC, needsAC) = (!r, false)
+        case .ac:                   (needsDC, needsAC) = (false, true)
+        }
+
         let resolved: [Resolved] = try zip(planes, scan.components).map {
-            guard let dc: JPEG.Table.Huffman = tables.dc[$1.dc] else {
-                throw JPEG.DecodingError.undefinedScanHuffmanTableReference($1.dc)
+            var dc: JPEG.Table.Huffman?
+            var ac: JPEG.Table.Huffman?
+            if needsDC {
+                guard let table: JPEG.Table.Huffman = tables.dc[$1.dc] else {
+                    throw JPEG.DecodingError.undefinedScanHuffmanTableReference($1.dc)
+                }
+                dc = table
             }
-            guard let ac: JPEG.Table.Huffman = tables.ac[$1.ac] else {
-                throw JPEG.DecodingError.undefinedScanHuffmanTableReference($1.ac)
+            if needsAC {
+                guard let table: JPEG.Table.Huffman = tables.ac[$1.ac] else {
+                    throw JPEG.DecodingError.undefinedScanHuffmanTableReference($1.ac)
+                }
+                ac = table
             }
             return .init(
                 plane: $0,
@@ -85,11 +108,12 @@ extension JPEG.Data.Spectral {
             restartInterval: restartInterval
         ) {
             var bits: JPEG.Bitstream = .init(interval)
-            // The DC predictor is differential across blocks and resets at every
-            // restart marker. That reset is the entire point of restarts: it is
-            // what lets a decoder recover from a corrupt interval instead of
-            // producing a wrong image from there to the bottom edge.
+            // Both of these reset at every restart marker, and that reset is
+            // the entire point of restarts: it is what lets a decoder recover
+            // from a corrupt interval instead of producing a wrong image from
+            // there to the bottom edge.
             var predictor: [Int32] = .init(repeating: 0, count: self.planes.count)
+            var eobrun: Int = 0
 
             let end: Int = restartInterval > 0
                 ? Swift.min(total, decoded + restartInterval)
@@ -112,12 +136,52 @@ extension JPEG.Data.Spectral {
                                 )
                                 : unit
 
-                            try self.decode(
-                                block: block,
-                                of: component,
-                                from: &bits,
-                                predictor: &predictor[component.plane]
-                            )
+                            switch kind {
+                            case .sequential:
+                                try self.decode(
+                                    sequential: block,
+                                    of: component,
+                                    from: &bits,
+                                    predictor: &predictor[component.plane]
+                                )
+
+                            case .dc(refining: false):
+                                try self.decode(
+                                    dcFirst: block,
+                                    of: component,
+                                    from: &bits,
+                                    predictor: &predictor[component.plane],
+                                    approximation: scan.approximation
+                                )
+
+                            case .dc(refining: true):
+                                self.decode(
+                                    dcRefining: block,
+                                    of: component,
+                                    from: &bits,
+                                    approximation: scan.approximation
+                                )
+
+                            case .ac(refining: false):
+                                try self.decode(
+                                    acFirst: block,
+                                    of: component,
+                                    from: &bits,
+                                    band: scan.band,
+                                    approximation: scan.approximation,
+                                    eobrun: &eobrun
+                                )
+
+                            case .ac(refining: true):
+                                try self.decode(
+                                    acRefining: block,
+                                    of: component,
+                                    from: &bits,
+                                    band: scan.band,
+                                    approximation: scan.approximation,
+                                    eobrun: &eobrun
+                                )
+                            }
                         }
                     }
                 }
@@ -134,7 +198,7 @@ extension JPEG.Data.Spectral {
         }
     }
 
-    /// Decodes one 8×8 block.
+    /// Decodes one 8×8 block of a sequential scan.
     ///
     /// The DC coefficient is coded as a difference from the previous block of
     /// the same component, so `predictor` carries across calls. The AC
@@ -142,12 +206,19 @@ extension JPEG.Data.Spectral {
     /// zigzag order, which is why the high-frequency tail — usually all zeros —
     /// costs one end-of-block symbol rather than 63 of them.
     private mutating func decode(
-        block: (x: Int, y: Int),
+        sequential block: (x: Int, y: Int),
         of component: Resolved,
         from bits: inout JPEG.Bitstream,
         predictor: inout Int32
     ) throws {
-        let category: Int = .init(try component.dc.symbol(from: &bits))
+        guard
+        let dc: JPEG.Table.Huffman = component.dc,
+        let ac: JPEG.Table.Huffman = component.ac
+        else {
+            return
+        }
+
+        let category: Int = .init(try dc.symbol(from: &bits))
         guard category <= 16 else {
             throw JPEG.DecodingError.invalidEntropyCodedSymbol
         }
@@ -157,7 +228,7 @@ extension JPEG.Data.Spectral {
 
         var z: Int = 1
         while z < 64 {
-            let symbol: UInt8 = try component.ac.symbol(from: &bits)
+            let symbol: UInt8 = try ac.symbol(from: &bits)
             let run: Int = .init(symbol >> 4)
             let size: Int = .init(symbol & 0x0F)
 
