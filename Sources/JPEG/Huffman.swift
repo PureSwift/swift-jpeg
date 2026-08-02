@@ -44,7 +44,14 @@ extension JPEG.Table {
         }
 
         /// The symbols, ordered by code length and then by code value.
-        private let values: [UInt8]
+        let values: [UInt8]
+        /// How many codes have each length from 1 through 16.
+        ///
+        /// Kept because writing the table back out needs exactly what was read
+        /// in — a `DHT` segment transmits the counts and symbols, never the
+        /// codes — and deriving them back from the decode tables would be work
+        /// to undo work.
+        let counts: [Int]
         /// The numerically smallest code of each length, indexed by length.
         ///
         /// Index 0 is unused so that a length can index directly.
@@ -114,6 +121,7 @@ extension JPEG.Table.Huffman {
         }
 
         self.values = values
+        self.counts = counts
         self.mincode = mincode
         self.maxcode = maxcode
         self.offset = offset
