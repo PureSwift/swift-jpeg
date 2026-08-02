@@ -96,6 +96,28 @@ extension JPEG.Process {
         }
     }
 
+    /// The start-of-frame marker code that identifies this process.
+    ///
+    /// The inverse of ``init(markerCode:)``, reassembling the same 4×4 grid:
+    /// the process in the low two bits, the differential flag in bit 2, and
+    /// arithmetic coding in bit 3.
+    var markerCode: UInt8 {
+        switch self {
+        case .baseline:
+            return 0xC0
+        case .extended(coding: let coding, differential: let differential):
+            return 0xC1 | Self.flags(coding, differential)
+        case .progressive(coding: let coding, differential: let differential):
+            return 0xC2 | Self.flags(coding, differential)
+        case .lossless(coding: let coding, differential: let differential):
+            return 0xC3 | Self.flags(coding, differential)
+        }
+    }
+
+    private static func flags(_ coding: JPEG.Coding, _ differential: Bool) -> UInt8 {
+        (coding == .arithmetic ? 0x08 : 0) | (differential ? 0x04 : 0)
+    }
+
     /// Whether this process codes its coefficients across multiple scans.
     public var isProgressive: Bool {
         if case .progressive = self {
