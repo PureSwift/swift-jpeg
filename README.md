@@ -5,8 +5,10 @@ TurboJPEG C ABI.
 
 ## Status
 
-Early. Decoding works for both baseline and progressive JPEGs, verified against
-reference decodes produced by libjpeg-turbo. Encoding does not exist yet.
+Early, but a working codec: decoding handles baseline and progressive JPEGs,
+and baseline encoding produces files libjpeg-turbo reads cleanly. Both
+directions are verified against libjpeg-turbo rather than only against
+themselves.
 
 | | |
 | --- | --- |
@@ -16,7 +18,8 @@ reference decodes produced by libjpeg-turbo. Encoding does not exist yet.
 | Restart intervals | ✅ |
 | Interpolated chroma upsampling | ✅ |
 | Progressive decode | ✅ |
-| Encoding | ❌ not yet |
+| Baseline encoding | ✅ |
+| Progressive encoding | ❌ not yet |
 | JFIF / EXIF metadata | ❌ not yet |
 | TurboJPEG C ABI | ❌ groundwork only |
 
@@ -45,6 +48,13 @@ let image: JPEG.Data.Rectangular<JPEG.Common> = try .decompress(stream: &stream)
 
 let size: (x: Int, y: Int) = image.size
 let rgb: [JPEG.RGB] = image.unpack(as: JPEG.RGB.self)
+```
+
+Encoding goes the other way, at a quality on the usual 1–100 scale:
+
+```swift
+var encoded: [UInt8] = []
+try image.compress(stream: &encoded, quality: 85)
 ```
 
 Stopping at an earlier tier gives you the coefficients or the unsampled planes
@@ -115,6 +125,13 @@ for progressive images as for baseline ones.
 The sampling modes are held to separate thresholds so a failure localizes
 itself — grayscale covers the transform, 4:4:4 adds color conversion, 4:2:2 and
 4:2:0 add upsampling in one axis and then both.
+
+The encoder is checked by round-tripping through the decoder, which is not
+circular: the forward and inverse transforms are separate implementations
+verified against each other and against the closed form, and the Huffman encoder
+derives from the same canonical rule the decoder reconstructs independently. The
+drift ceiling is calibrated against libjpeg-turbo doing the identical
+decode-then-re-encode, which drifts more than this encoder does.
 
 Two gaps worth naming. Extended sequential frames (`SOF1`) take the same code
 path as baseline but no fixture exercises them, because neither ImageMagick nor
