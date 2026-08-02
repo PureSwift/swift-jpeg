@@ -5,16 +5,17 @@ TurboJPEG C ABI.
 
 ## Status
 
-Early. What works today is **baseline sequential decoding**, verified against
-reference decodes produced by libjpeg-turbo.
+Early. Decoding works for both baseline and progressive JPEGs, verified against
+reference decodes produced by libjpeg-turbo. Encoding does not exist yet.
 
 | | |
 | --- | --- |
 | Baseline sequential decode | ✅ |
+| Extended sequential decode | ⚠️ shares the baseline path, untested |
 | Grayscale, 4:4:4, 4:2:2, 4:2:0 | ✅ |
 | Restart intervals | ✅ |
 | Interpolated chroma upsampling | ✅ |
-| Progressive decode | ❌ not yet |
+| Progressive decode | ✅ |
 | Encoding | ❌ not yet |
 | JFIF / EXIF metadata | ❌ not yet |
 | TurboJPEG C ABI | ❌ groundwork only |
@@ -108,11 +109,17 @@ ImageMagick, which decodes through libjpeg-turbo.
 Comparison is against an error bound rather than bit equality, which is how T.83
 defines conformance: implementations round the inverse DCT differently and are
 permitted to. Current worst-case sample deviation against the reference is 1 for
-grayscale and 3 for color, with mean absolute deviation under 0.1.
+grayscale and 3 for color, with mean absolute deviation under 0.1 — the same
+for progressive images as for baseline ones.
 
 The sampling modes are held to separate thresholds so a failure localizes
 itself — grayscale covers the transform, 4:4:4 adds color conversion, 4:2:2 and
 4:2:0 add upsampling in one axis and then both.
+
+Two gaps worth naming. Extended sequential frames (`SOF1`) take the same code
+path as baseline but no fixture exercises them, because neither ImageMagick nor
+Pillow will emit one. Nothing covers 12- or 16-bit precision, which the
+TurboJPEG ABI will eventually require, for the same reason.
 
 ## License
 
