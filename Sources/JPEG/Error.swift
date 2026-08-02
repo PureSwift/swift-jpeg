@@ -329,3 +329,71 @@ extension JPEG.DecodingError {
         }
     }
 }
+
+extension JPEG {
+    /// An error thrown while encoding.
+    ///
+    /// Encoding fails on what the caller asked for, not on what a file
+    /// contained, so these describe an unsatisfiable request rather than
+    /// malformed input.
+    public enum EncodingError: JPEG.Error {
+        /// The image is larger than a frame header can describe.
+        ///
+        /// Both dimensions are 16-bit fields, so 65535 is the hard ceiling.
+        case imageTooLarge(width: Int, height: Int)
+        /// The requested coding process has no encoder.
+        case unsupportedProcess(JPEG.Process)
+        /// The requested sample precision has no encoder.
+        case unsupportedPrecision(Int)
+        /// A component named a quantization table that was never supplied.
+        case undefinedQuantizationTable(JPEG.Table.Quantization.Key)
+        /// A scan named a Huffman table that was never supplied.
+        case undefinedHuffmanTable(JPEG.Table.Huffman.Key, JPEG.Table.Huffman.Class)
+        /// A coefficient did not fit in the 16 magnitude categories T.81
+        /// defines.
+        ///
+        /// Reachable only from a hand-built spectral image, since anything this
+        /// library quantizes is in range by construction.
+        case coefficientOutOfRange(Int)
+    }
+}
+
+extension JPEG.EncodingError {
+    public static var namespace: String {
+        "encoding error"
+    }
+
+    public var message: String {
+        switch self {
+        case .imageTooLarge:
+            return "image too large"
+        case .unsupportedProcess:
+            return "unsupported coding process"
+        case .unsupportedPrecision:
+            return "unsupported sample precision"
+        case .undefinedQuantizationTable:
+            return "undefined quantization table"
+        case .undefinedHuffmanTable:
+            return "undefined huffman table"
+        case .coefficientOutOfRange:
+            return "coefficient out of range"
+        }
+    }
+
+    public var details: String? {
+        switch self {
+        case .imageTooLarge(width: let width, height: let height):
+            return "\(width) x \(height) exceeds the 65535 a frame header can encode"
+        case .unsupportedProcess(let process):
+            return "no encoder for the \(process) process"
+        case .unsupportedPrecision(let precision):
+            return "no encoder for \(precision)-bit samples"
+        case .undefinedQuantizationTable(let key):
+            return "a component references quantization table \(key), which was not supplied"
+        case .undefinedHuffmanTable(let key, let `class`):
+            return "a scan references \(`class`) huffman table \(key), which was not supplied"
+        case .coefficientOutOfRange(let value):
+            return "coefficient \(value) exceeds the largest magnitude category T.81 defines"
+        }
+    }
+}
