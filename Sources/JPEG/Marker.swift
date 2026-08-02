@@ -114,6 +114,31 @@ extension JPEG.Marker {
         }
     }
 
+    /// The code byte that encodes this marker.
+    ///
+    /// The inverse of ``init(code:)`` for every case a writer can produce. A
+    /// frame marker's code comes back from the process, which is where it was
+    /// carried in the first place.
+    public var code: UInt8 {
+        switch self {
+        case .start:                        return 0xD8
+        case .end:                          return 0xD9
+        case .scan:                         return 0xDA
+        case .quantization:                 return 0xDB
+        case .height:                       return 0xDC
+        case .restartInterval:              return 0xDD
+        case .hierarchical:                 return 0xDE
+        case .expandReference:              return 0xDF
+        case .huffman:                      return 0xC4
+        case .arithmeticCodingCondition:    return 0xCC
+        case .comment:                      return 0xFE
+        case .restart(let phase):           return 0xD0 + .init(truncatingIfNeeded: phase & 7)
+        case .application(let n):           return 0xE0 + .init(truncatingIfNeeded: n & 15)
+        case .reserved(let code):           return code
+        case .frame(let process):           return process.markerCode
+        }
+    }
+
     /// Whether a length field and payload follow this marker.
     ///
     /// The standalone markers carry no segment: a lexer must not try to read a
