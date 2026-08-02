@@ -55,6 +55,29 @@ extension JPEG.Header {
         public let bits: Range<Int>
         /// The components this scan codes, in interleave order.
         public let components: [JPEG.ScanComponent]
+
+        /// What a scan codes, and whether it is refining what an earlier scan
+        /// already wrote.
+        ///
+        /// A sequential scan codes every coefficient of every block once. A
+        /// progressive image splits that work up two ways at once — by spectral
+        /// band, and by bit position — and the four resulting combinations are
+        /// coded by genuinely different procedures, not by one procedure with
+        /// parameters. Naming them here keeps that dispatch in one place.
+        public enum Kind: Sendable, Hashable {
+            /// Every coefficient, in one pass.
+            case sequential
+            /// The DC coefficient only.
+            ///
+            /// May be interleaved across several components.
+            case dc(refining: Bool)
+            /// A band of AC coefficients.
+            ///
+            /// Never interleaved: T.81 requires a single component, because
+            /// there is no meaningful MCU when only some coefficients are
+            /// present.
+            case ac(refining: Bool)
+        }
     }
 
     /// A parsed define-number-of-lines segment.
@@ -243,11 +266,55 @@ extension JPEG.Header.Scan {
             throw JPEG.ParsingError.invalidScanSuccessiveApproximation(high: high, low: low)
         }
 
+        if process.isProgressive {
+            // A DC scan is exactly Ss = Se = 0. Anything else starting at zero
+            // would mix DC and AC coding in one pass, which the standard does
+            // not define.
+            if start == 0, end != 0 {
+                throw JPEG.ParsingError.invalidScanBandRange(start ..< end + 1, process)
+            }
+            // An AC scan has no interleaving to define, since an MCU made of
+            // partial blocks is meaningless.
+            if start != 0, count != 1 {
+                throw JPEG.ParsingError.invalidScanComponentCount(count)
+            }
+        }
+
         return .init(
             band: start ..< end + 1,
             bits: low ..< (high == 0 ? Int.max : high),
             components: components
         )
+    }
+}
+
+extension JPEG.Header.Scan {
+    /// The point transform: the bit position this scan codes down to.
+    ///
+    /// Coefficients are stored shifted left by this much, so a later refinement
+    /// can fill in the bits below.
+    public var approximation: Int {
+        self.bits.lowerBound
+    }
+
+    /// Whether this scan is the first to write the bits it covers.
+    ///
+    /// A first pass writes whole coefficient values; a refinement only appends
+    /// one bit to each, and has to be told which coefficients already exist.
+    public var isFirstPass: Bool {
+        self.bits.upperBound == Int.max
+    }
+
+    /// Classifies this scan for the given coding process.
+    public func kind(process: JPEG.Process) -> Kind {
+        guard process.isProgressive else {
+            return .sequential
+        }
+        if self.band.lowerBound == 0 {
+            return .dc(refining: !self.isFirstPass)
+        } else {
+            return .ac(refining: !self.isFirstPass)
+        }
     }
 }
 
