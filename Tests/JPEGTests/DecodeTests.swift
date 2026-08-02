@@ -44,6 +44,16 @@ struct DecodeTests {
         // the phase counter wrapping past 7, which a scan without restarts
         // never touches.
         .init(name: "restarts", reference: "restarts", channels: 3, deviation: 4, mean: 0.20),
+        // Progressive: 10 scans for color, 6 for grayscale, so between them
+        // they cover DC first and refining and AC first and refining.
+        .init(name: "progressive", reference: "progressive", channels: 3, deviation: 4, mean: 0.20),
+        .init(
+            name: "progressive-gray",
+            reference: "progressive-gray",
+            channels: 1,
+            deviation: 2,
+            mean: 0.05
+        ),
     ]
 
     private static func resource(_ name: String, _ ext: String) throws -> [UInt8] {
@@ -67,6 +77,17 @@ struct DecodeTests {
         // 133 wide over 16-sample MCUs is 9 MCUs, covering 144 samples: the
         // last 11 columns are padding that must be decoded and then dropped.
         #expect(image.layout.mcus == (x: 9, y: 7))
+    }
+
+    /// Guards against the progressive fixtures silently being regenerated as
+    /// baseline, which would leave the whole progressive path untested while
+    /// every assertion still passed.
+    @Test(arguments: ["progressive", "progressive-gray"])
+    func progressiveFixturesAreProgressive(_ name: String) throws {
+        var stream: [UInt8] = try Self.resource(name, "jpg")
+        let image: JPEG.Data.Rectangular<JPEG.Common> = try .decompress(stream: &stream)
+
+        #expect(image.layout.process == .progressive(coding: .huffman, differential: false))
     }
 
     @Test
