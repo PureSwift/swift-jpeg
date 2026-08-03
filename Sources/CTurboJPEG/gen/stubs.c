@@ -30,79 +30,9 @@ unsigned long TJBUFSIZEYUV(int width, int height, int jpegSubsamp)
   return 0;
 }
 
-int tjDecompressToYUV(tjhandle handle, unsigned char *jpegBuf, unsigned long jpegSize, unsigned char *dstBuf, int flags)
-{
-  return -1;
-}
-
-int tjEncodeYUV(tjhandle handle, unsigned char *srcBuf, int width, int pitch, int height, int pixelSize, unsigned char *dstBuf, int subsamp, int flags)
-{
-  return -1;
-}
-
-unsigned long tjBufSizeYUV(int width, int height, int subsamp)
-{
-  return 0;
-}
-
-int tjEncodeYUV2(tjhandle handle, unsigned char *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char *dstBuf, int subsamp, int flags)
-{
-  return -1;
-}
-
 int tjTransform(tjhandle handle, const unsigned char *jpegBuf, unsigned long jpegSize, int n, unsigned char **dstBufs, unsigned long *dstSizes, tjtransform *transforms, int flags)
 {
   return -1;
-}
-
-unsigned long tjBufSizeYUV2(int width, int align, int height, int subsamp)
-{
-  return 0;
-}
-
-int tjCompressFromYUV(tjhandle handle, const unsigned char *srcBuf, int width, int align, int height, int subsamp, unsigned char **jpegBuf, unsigned long *jpegSize, int jpegQual, int flags)
-{
-  return -1;
-}
-
-int tjCompressFromYUVPlanes(tjhandle handle, const unsigned char **srcPlanes, int width, const int *strides, int height, int subsamp, unsigned char **jpegBuf, unsigned long *jpegSize, int jpegQual, int flags)
-{
-  return -1;
-}
-
-int tjDecodeYUV(tjhandle handle, const unsigned char *srcBuf, int align, int subsamp, unsigned char *dstBuf, int width, int pitch, int height, int pixelFormat, int flags)
-{
-  return -1;
-}
-
-int tjDecodeYUVPlanes(tjhandle handle, const unsigned char **srcPlanes, const int *strides, int subsamp, unsigned char *dstBuf, int width, int pitch, int height, int pixelFormat, int flags)
-{
-  return -1;
-}
-
-int tjDecompressToYUV2(tjhandle handle, const unsigned char *jpegBuf, unsigned long jpegSize, unsigned char *dstBuf, int width, int align, int height, int flags)
-{
-  return -1;
-}
-
-int tjDecompressToYUVPlanes(tjhandle handle, const unsigned char *jpegBuf, unsigned long jpegSize, unsigned char **dstPlanes, int width, int *strides, int height, int flags)
-{
-  return -1;
-}
-
-int tjEncodeYUV3(tjhandle handle, const unsigned char *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char *dstBuf, int align, int subsamp, int flags)
-{
-  return -1;
-}
-
-int tjEncodeYUVPlanes(tjhandle handle, const unsigned char *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char **dstPlanes, int *strides, int subsamp, int flags)
-{
-  return -1;
-}
-
-unsigned long tjPlaneSizeYUV(int componentID, int width, int stride, int height, int subsamp)
-{
-  return 0;
 }
 
 unsigned char *tjLoadImage(const char *filename, int *width, int align, int *height, int *pixelFormat, int flags)
@@ -125,52 +55,12 @@ int tj3Compress16(tjhandle handle, const unsigned short *srcBuf, int width, int 
   return -1;
 }
 
-int tj3CompressFromYUV8(tjhandle handle, const unsigned char *srcBuf, int width, int align, int height, unsigned char **jpegBuf, size_t *jpegSize)
-{
-  return -1;
-}
-
-int tj3CompressFromYUVPlanes8(tjhandle handle, const unsigned char * const *srcPlanes, int width, const int *strides, int height, unsigned char **jpegBuf, size_t *jpegSize)
-{
-  return -1;
-}
-
-int tj3DecodeYUV8(tjhandle handle, const unsigned char *srcBuf, int align, unsigned char *dstBuf, int width, int pitch, int height, int pixelFormat)
-{
-  return -1;
-}
-
-int tj3DecodeYUVPlanes8(tjhandle handle, const unsigned char * const *srcPlanes, const int *strides, unsigned char *dstBuf, int width, int pitch, int height, int pixelFormat)
-{
-  return -1;
-}
-
 int tj3Decompress12(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, short *dstBuf, int pitch, int pixelFormat)
 {
   return -1;
 }
 
 int tj3Decompress16(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, unsigned short *dstBuf, int pitch, int pixelFormat)
-{
-  return -1;
-}
-
-int tj3DecompressToYUV8(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, unsigned char *dstBuf, int align)
-{
-  return -1;
-}
-
-int tj3DecompressToYUVPlanes8(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, unsigned char **dstPlanes, int *strides)
-{
-  return -1;
-}
-
-int tj3EncodeYUV8(tjhandle handle, const unsigned char *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char *dstBuf, int align)
-{
-  return -1;
-}
-
-int tj3EncodeYUVPlanes8(tjhandle handle, const unsigned char *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char **dstPlanes, int *strides)
 {
   return -1;
 }
@@ -216,26 +106,6 @@ int tj3SetScalingFactor(tjhandle handle, tjscalingfactor scalingFactor)
 }
 
 int tj3Transform(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, int n, unsigned char **dstBufs, size_t *dstSizes, const tjtransform *transforms)
-{
-  return -1;
-}
-
-size_t tj3YUVBufSize(int width, int align, int height, int subsamp)
-{
-  return 0;
-}
-
-int tj3YUVPlaneHeight(int componentID, int height, int subsamp)
-{
-  return -1;
-}
-
-size_t tj3YUVPlaneSize(int componentID, int width, int stride, int height, int subsamp)
-{
-  return 0;
-}
-
-int tj3YUVPlaneWidth(int componentID, int width, int subsamp)
 {
   return -1;
 }
