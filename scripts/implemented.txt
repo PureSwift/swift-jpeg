@@ -1,0 +1,22 @@
+# Published symbols with a real implementation, in Sources/TurboJPEGABI.
+#
+# A name must not appear here until something actually defines it: these are
+# excluded from the generated stubs, so listing one early is a missing symbol at
+# link time and listing one late is a duplicate. Add a name in the same change
+# that implements it, then regenerate:
+#
+#     python3 scripts/gen-stubs.py
+
+tj3Init
+tj3InitVersion
+tj3Destroy
+tj3Alloc
+tj3Free
+tj3Set
+tj3Get
+tj3GetErrorStr
+tj3GetErrorCode
+tj3JPEGBufSize
+tj3Compress8
+tj3DecompressHeader
+tj3Decompress8
