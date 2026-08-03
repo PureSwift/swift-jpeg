@@ -21,7 +21,7 @@ stock TurboJPEG header can link and use.
 | Baseline encoding | ✅ |
 | Progressive encoding | ❌ not yet |
 | JFIF / EXIF metadata | ❌ not yet |
-| TurboJPEG C ABI | ⚠️ 32 of 81 symbols; the rest stubbed |
+| TurboJPEG C ABI | ⚠️ 58 of 81 symbols; the rest stubbed |
 
 ## Requirements
 
@@ -73,7 +73,9 @@ An image is modeled at three tiers, and decoding walks down them:
   cropping to a block boundary, or requantizing is lossless here and lossy
   anywhere else.
 - **`Planar`** — samples, dequantized and inverse transformed, each component
-  still at its own subsampled resolution.
+  still at its own subsampled resolution. This is what `tj3DecompressToYUV8`
+  hands back, and stopping here saves a consumer feeding a video encoder or a
+  GPU texture two conversions it would only have to undo.
 - **`Rectangular`** — samples upsampled to full resolution and interleaved.
 
 Color is a protocol rather than a hardcoded path, because JPEG records no color
@@ -98,12 +100,12 @@ target that depends on it.
 `TURBOJPEG_*` version nodes, exactly the 81 published symbols, and no Swift
 symbols leaked past the version script.
 
-Thirty-two symbols are implemented: the TJ3 lifecycle, parameters, buffer
-sizing, and the 8-bit compress and decompress paths, plus the whole 1.x/2.x
-compress and decompress surface. That last part matters more than its size
-suggests — most software linking TurboJPEG today was written against the old
-API, so implementing only TJ3 would make this a drop-in for nothing already
-installed. The other 49 are generated C stubs
+Fifty-eight symbols are implemented: the TJ3 lifecycle, parameters and buffer
+sizing, the 8-bit compress and decompress paths, the planar YUV surface in both
+directions, and the 1.x/2.x spelling of all of it. Covering the old API matters
+more than its size suggests — most software linking TurboJPEG today was written
+against it, so implementing only TJ3 would make this a drop-in for nothing
+already installed. The other 23 are generated C stubs
 that return the failure value their signature documents, so the library loads
 and every entry point resolves; the unfinished ones fail like ordinary errors
 rather than crashing or returning something plausible. `scripts/implemented.txt`
@@ -116,8 +118,8 @@ real libjpeg-turbo instead and both should behave identically; that comparison
 is why they are C rather than more Swift tests.
 
 Not implemented, and refused rather than approximated: scaled decompression,
-the YUV-plane entry points, lossless transformation, and 12- or 16-bit
-precision. A request for any of them fails through the API's own error
+lossless transformation, image file loading and saving, ICC profiles, and 12- or
+16-bit precision. A request for any of them fails through the API's own error
 convention.
 
 TurboJPEG is a good substitution target where the libjpeg API is not. `tjhandle`
