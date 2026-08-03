@@ -41,3 +41,35 @@ tjDecompressHeader2
 tjDecompressHeader3
 tjGetScalingFactors
 tj3GetScalingFactors
+
+# YUV plane geometry.
+tj3YUVPlaneWidth
+tj3YUVPlaneHeight
+tj3YUVPlaneSize
+tj3YUVBufSize
+tjBufSizeYUV
+tjBufSizeYUV2
+tjPlaneSizeYUV
+
+# YUV conversion.
+tj3EncodeYUV8
+tj3EncodeYUVPlanes8
+tj3DecodeYUV8
+tj3DecodeYUVPlanes8
+tj3DecompressToYUV8
+tj3DecompressToYUVPlanes8
+tj3CompressFromYUV8
+tj3CompressFromYUVPlanes8
+
+# The 1.x and 2.x YUV spellings.
+tjEncodeYUV
+tjEncodeYUV2
+tjEncodeYUV3
+tjEncodeYUVPlanes
+tjDecodeYUV
+tjDecodeYUVPlanes
+tjDecompressToYUV
+tjDecompressToYUV2
+tjDecompressToYUVPlanes
+tjCompressFromYUV
+tjCompressFromYUVPlanes
