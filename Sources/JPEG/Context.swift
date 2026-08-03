@@ -36,7 +36,7 @@ extension JPEG {
 
 extension JPEG.Context {
     /// Applies a `DQT` segment.
-    public mutating func push(quantization data: [UInt8]) throws {
+    public mutating func push(quantization data: [UInt8]) throws(JPEG.Failure) {
         for table: JPEG.Table.Quantization in try JPEG.Table.Quantization.parse(data) {
             self.quanta[table.target] = table
         }
@@ -48,14 +48,14 @@ extension JPEG.Context {
     }
 
     /// Applies a `DHT` segment.
-    public mutating func push(huffman data: [UInt8]) throws {
+    public mutating func push(huffman data: [UInt8]) throws(JPEG.Failure) {
         for table: JPEG.Table.Huffman in try JPEG.Table.Huffman.parse(data) {
             self.tables.push(table)
         }
     }
 
     /// Applies a `DAC` segment.
-    public mutating func push(arithmetic data: [UInt8]) throws {
+    public mutating func push(arithmetic data: [UInt8]) throws(JPEG.Failure) {
         for entry in try JPEG.Arithmetic.Conditioners.parse(data) {
             switch entry.class {
             case .dc:   self.conditioning.dc[entry.target] = entry.conditioning
@@ -65,21 +65,21 @@ extension JPEG.Context {
     }
 
     /// Applies a `DRI` segment.
-    public mutating func push(restartInterval data: [UInt8]) throws {
+    public mutating func push(restartInterval data: [UInt8]) throws(JPEG.Failure) {
         self.restartInterval = try JPEG.Header.RestartInterval.parse(data).interval
     }
 
     /// Applies a `DNL` segment.
-    public mutating func push(height data: [UInt8]) throws {
+    public mutating func push(height data: [UInt8]) throws(JPEG.Failure) {
         let redefinition: JPEG.Header.HeightRedefinition = try .parse(data)
         self.frame?.redefine(height: redefinition)
         self.spectral?.set(height: redefinition.height)
     }
 
     /// Applies a start-of-frame segment.
-    public mutating func push(frame data: [UInt8], process: JPEG.Process) throws {
+    public mutating func push(frame data: [UInt8], process: JPEG.Process) throws(JPEG.Failure) {
         guard self.frame == nil else {
-            throw JPEG.DecodingError.duplicateFrameHeader
+            throw .decoding(.duplicateFrameHeader)
         }
 
         let frame: JPEG.Header.Frame = try .parse(data, process: process)
@@ -91,9 +91,9 @@ extension JPEG.Context {
     }
 
     /// Applies a start-of-scan segment and the entropy coded data following it.
-    public mutating func push(scan data: [UInt8], ecs: [UInt8]) throws {
+    public mutating func push(scan data: [UInt8], ecs: [UInt8]) throws(JPEG.Failure) {
         guard let frame: JPEG.Header.Frame = self.frame else {
-            throw JPEG.DecodingError.missingFrameHeader
+            throw .decoding(.missingFrameHeader)
         }
 
         let scan: JPEG.Header.Scan = try .parse(data, process: frame.process)
@@ -126,7 +126,7 @@ extension JPEG.Data.Spectral {
     /// plenty of them, and none affect the coefficients.
     public static func decompress<Source>(
         stream: inout Source
-    ) throws -> Self where Source: JPEG.Bytestream.Source {
+    ) throws(JPEG.Failure) -> Self where Source: JPEG.Bytestream.Source {
         try stream.start()
 
         var context: JPEG.Context<Format> = .init()
@@ -182,7 +182,7 @@ extension JPEG.Data.Spectral {
         }
 
         guard let spectral: Self = context.spectral else {
-            throw JPEG.DecodingError.missingFrameHeader
+            throw .decoding(.missingFrameHeader)
         }
         return spectral
     }
@@ -194,7 +194,7 @@ extension JPEG.Data.Spectral {
     /// Preferred over the `inout` form for an in-memory image: it reads through
     /// a cursor, which is linear in the length of the stream rather than
     /// quadratic.
-    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+    public static func decompress(_ bytes: [UInt8]) throws(JPEG.Failure) -> Self {
         var stream: JPEG.Bytestream.Cursor = .init(bytes)
         return try self.decompress(stream: &stream)
     }
@@ -202,7 +202,7 @@ extension JPEG.Data.Spectral {
 
 extension JPEG.Data.Planar {
     /// Decodes an image from a buffer.
-    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+    public static func decompress(_ bytes: [UInt8]) throws(JPEG.Failure) -> Self {
         var stream: JPEG.Bytestream.Cursor = .init(bytes)
         return try self.decompress(stream: &stream)
     }
@@ -210,14 +210,14 @@ extension JPEG.Data.Planar {
     /// Decodes an image and transforms it to samples.
     public static func decompress<Source>(
         stream: inout Source
-    ) throws -> Self where Source: JPEG.Bytestream.Source {
+    ) throws(JPEG.Failure) -> Self where Source: JPEG.Bytestream.Source {
         try JPEG.Data.Spectral<Format>.decompress(stream: &stream).decomposed()
     }
 }
 
 extension JPEG.Data.Rectangular {
     /// Decodes an image from a buffer.
-    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+    public static func decompress(_ bytes: [UInt8]) throws(JPEG.Failure) -> Self {
         var stream: JPEG.Bytestream.Cursor = .init(bytes)
         return try self.decompress(stream: &stream)
     }
@@ -225,7 +225,7 @@ extension JPEG.Data.Rectangular {
     /// Decodes an image all the way to interleaved full-resolution samples.
     public static func decompress<Source>(
         stream: inout Source
-    ) throws -> Self where Source: JPEG.Bytestream.Source {
+    ) throws(JPEG.Failure) -> Self where Source: JPEG.Bytestream.Source {
         try JPEG.Data.Spectral<Format>.decompress(stream: &stream).rectangular()
     }
 }
