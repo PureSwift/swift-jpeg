@@ -1,0 +1,133 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# A push that lands while an earlier run is still going makes that run
+# uninteresting, so it is cancelled rather than left to finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build, test and prove substitutability on both architectures. arm64 is not
+  # optional coverage here: it is the only place the NEON kernels run at all,
+  # and a runner is native ARM rather than emulated, so its timings mean
+  # something.
+  test:
+    name: test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version && uname -m
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      # The CMake that Ubuntu 24.04 packages is 3.28, and the build needs 3.29
+      # for CMP0157 — Swift compilation mode. The official tarball is published
+      # for both architectures, so this is the same two lines either way.
+      - name: CMake and Ninja
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ninja-build curl
+          version=3.31.6
+          arch=$(uname -m)
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-${arch}.tar.gz" \
+            | tar xz -C /opt
+          echo "/opt/cmake-${version}-linux-${arch}/bin" >> "$GITHUB_PATH"
+
+      # The Swift tests prove the codec is correct. Only a C program compiled
+      # against the real header and linked against the built .so proves the ABI
+      # is, which is the thing this library claims to be.
+      #
+      # CC is set because the Swift images ship clang without a `cc` alias.
+      - name: Conformance
+        env:
+          CC: clang
+        run: ./Conformance/run.sh
+
+  # The engine's no-imports rule is the reason it can be built for embedded and
+  # reused behind a C ABI. It is enforced here because it is the kind of thing
+  # a single convenient `import Foundation` undoes silently.
+  discipline:
+    runs-on: ubuntu-latest
+    container: swift:6.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The engine imports nothing
+        run: |
+          if grep -rlE '^\s*import ' Sources/JPEG/; then
+            echo "::error::the engine must not import anything"
+            exit 1
+          fi
+          echo "engine imports nothing"
+
+      # An untyped `throws` is `throws(any Error)`, and an existential is what
+      # Embedded Swift cannot represent. This is the check that keeps the
+      # engine buildable for an embedded target; without it the restriction
+      # would rot the first time someone wrote a plain `throws`.
+      - name: The engine builds for Embedded Swift
+        run: |
+          swiftc -enable-experimental-feature Embedded -wmo -Osize \
+                 -swift-version 6 -c Sources/JPEG/*.swift -o /tmp/embedded.o
+          ls -l /tmp/embedded.o
+
+  # Performance is checked on both architectures, and the thing that can fail is
+  # a ratio rather than a time. A shared runner under unknown load cannot be
+  # held to an absolute number without becoming flaky, and a flaky check gets
+  # ignored — but it slows the portable and accelerated kernels alike, so the
+  # ratio between them survives.
+  performance:
+    name: performance (${{ matrix.arch }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Benchmark
+        run: |
+          ./.build/release/jpeg-benchmark --check | tee /tmp/benchmark.txt
+
+      # Recorded on the run summary so a human can watch the absolute numbers
+      # drift over time, which is what they are good for. Nothing fails on them.
+      - name: Record
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.arch }}"
+            echo ""
+            echo '```'
+            cat /tmp/benchmark.txt || echo "benchmark did not run"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
