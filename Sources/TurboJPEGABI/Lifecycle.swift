@@ -22,13 +22,14 @@ private nonisolated(unsafe) let globalError: UnsafeMutablePointer<CChar> = {
     return buffer
 }()
 
-/// Whether an init type names a combination of the three documented flags.
+/// Whether an init type is one of the three the header declares.
 ///
-/// They are flags, not alternatives — a handle may be created for compression
-/// and decompression at once — so the check is a mask rather than an equality.
+/// They read like flags but are not: `TJINIT` is a plain enumeration numbered
+/// 0, 1, 2, and `TJINIT_TRANSFORM` means both rather than being the bitwise or
+/// of the other two. Treating them as a mask both rejects `TJINIT_COMPRESS`,
+/// which is zero, and accepts 3, which is not a value at all.
 private func valid(initType: Int32) -> Bool {
-    let mask: Int32 = TJINIT_COMPRESS.id | TJINIT_DECOMPRESS.id | TJINIT_TRANSFORM.id
-    return initType != 0 && initType & ~mask == 0
+    TJINIT_COMPRESS.id ... TJINIT_TRANSFORM.id ~= initType
 }
 
 /// The API version this library implements, matching the vendored header's
