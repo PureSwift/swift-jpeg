@@ -12,14 +12,14 @@ extension JPEG.Data.Spectral {
         from bits: inout JPEG.Bitstream,
         predictor: inout Int32,
         approximation: Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         guard let dc: JPEG.Table.Huffman = component.dc else {
             return
         }
 
         let category: Int = .init(try dc.symbol(from: &bits))
         guard category <= 16 else {
-            throw JPEG.DecodingError.invalidEntropyCodedSymbol
+            throw .decoding(.invalidEntropyCodedSymbol)
         }
 
         predictor &+= .init(bits.amplitude(category: category))
@@ -60,7 +60,7 @@ extension JPEG.Data.Spectral {
         band: Range<Int>,
         approximation: Int,
         eobrun: inout Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         guard let ac: JPEG.Table.Huffman = component.ac else {
             return
         }
@@ -91,7 +91,7 @@ extension JPEG.Data.Spectral {
 
             k += run
             guard k < band.upperBound else {
-                throw JPEG.DecodingError.invalidEntropyCodedSymbol
+                throw .decoding(.invalidEntropyCodedSymbol)
             }
 
             self.planes[component.plane][x: block.x, y: block.y, z: JPEG.zigzag[k]] =
@@ -123,7 +123,7 @@ extension JPEG.Data.Spectral {
         band: Range<Int>,
         approximation: Int,
         eobrun: inout Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         guard let ac: JPEG.Table.Huffman = component.ac else {
             return
         }
