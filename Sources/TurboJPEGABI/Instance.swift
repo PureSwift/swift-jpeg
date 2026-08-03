@@ -1,5 +1,6 @@
 import CTurboJPEG
 import JPEG
+import JPEGAccelerate
 
 /// What a `tjhandle` actually points at.
 ///
@@ -77,7 +78,25 @@ final class Instance {
     /// `Array`.
     var owned: Set<UInt>
 
+    /// Installs the accelerated kernels, once per process.
+    ///
+    /// A drop-in replacement for libjpeg-turbo should be as fast as the
+    /// processor allows without being asked, and there is no earlier hook in
+    /// the C API than creating a handle: `tj3Init` is the first call any client
+    /// makes. The Swift package leaves the choice to the caller, because a
+    /// Swift caller has a `main` to put it in and may not want the import.
+    ///
+    /// `lazy` on a static is the standard once-only initializer in Swift, and
+    /// the runtime guarantees it runs exactly once even if several threads
+    /// create handles at the same moment — which matters, because installing is
+    /// a write to process-wide state.
+    private static let accelerated: Bool = {
+        JPEG.Accelerate.install()
+        return true
+    }()
+
     init(initType: Int32, apiVersion: Int32) {
+        _ = Instance.accelerated
         self.initType = initType
         self.apiVersion = apiVersion
         self.parameters = [:]
