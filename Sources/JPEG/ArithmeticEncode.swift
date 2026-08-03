@@ -9,7 +9,7 @@ extension JPEG.Data.Spectral {
         arithmetic scan: JPEG.Header.Scan,
         conditioning: JPEG.Arithmetic.Conditioners,
         restartInterval: Int
-    ) throws -> [UInt8] {
+    ) throws(JPEG.Failure) -> [UInt8] {
         let planes: [Int] = try self.layout.validate(scan: scan)
         let interleaved: Bool = planes.count > 1
         let units: (x: Int, y: Int) = interleaved
