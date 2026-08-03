@@ -62,7 +62,7 @@ extension JPEG.Data.Spectral {
         scan: JPEG.Header.Scan,
         tables: JPEG.Tables,
         restartInterval: Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         let process: JPEG.Process = self.layout.process
 
         let kind: JPEG.Header.Scan.Kind = scan.kind(process: process)
@@ -79,23 +79,24 @@ extension JPEG.Data.Spectral {
         }
 
         let resolved: [Resolved] = try zip(planes, scan.components).map {
+            (plane, component) throws(JPEG.Failure) -> Resolved in
             var dc: JPEG.Table.Huffman?
             var ac: JPEG.Table.Huffman?
             if needsDC {
-                guard let table: JPEG.Table.Huffman = tables.dc[$1.dc] else {
-                    throw JPEG.DecodingError.undefinedScanHuffmanTableReference($1.dc)
+                guard let table: JPEG.Table.Huffman = tables.dc[component.dc] else {
+                    throw .decoding(.undefinedScanHuffmanTableReference(component.dc))
                 }
                 dc = table
             }
             if needsAC {
-                guard let table: JPEG.Table.Huffman = tables.ac[$1.ac] else {
-                    throw JPEG.DecodingError.undefinedScanHuffmanTableReference($1.ac)
+                guard let table: JPEG.Table.Huffman = tables.ac[component.ac] else {
+                    throw .decoding(.undefinedScanHuffmanTableReference(component.ac))
                 }
                 ac = table
             }
             return .init(
-                plane: $0,
-                sampling: self.layout.planes[$0].sampling,
+                plane: plane,
+                sampling: self.layout.planes[plane].sampling,
                 dc: dc,
                 ac: ac
             )
@@ -200,10 +201,10 @@ extension JPEG.Data.Spectral {
         }
 
         guard decoded == total else {
-            throw JPEG.DecodingError.truncatedEntropyCodedSegment(
+            throw .decoding(.truncatedEntropyCodedSegment(
                 decoded: decoded,
                 expected: total
-            )
+            ))
         }
     }
 
@@ -219,7 +220,7 @@ extension JPEG.Data.Spectral {
         of component: Resolved,
         from bits: inout JPEG.Bitstream,
         predictor: inout Int32
-    ) throws {
+    ) throws(JPEG.Failure) {
         guard
         let dc: JPEG.Table.Huffman = component.dc,
         let ac: JPEG.Table.Huffman = component.ac
@@ -229,7 +230,7 @@ extension JPEG.Data.Spectral {
 
         let category: Int = .init(try dc.symbol(from: &bits))
         guard category <= 16 else {
-            throw JPEG.DecodingError.invalidEntropyCodedSymbol
+            throw .decoding(.invalidEntropyCodedSymbol)
         }
         predictor &+= .init(bits.amplitude(category: category))
         self.planes[component.plane][x: block.x, y: block.y, z: 0] =
@@ -253,7 +254,7 @@ extension JPEG.Data.Spectral {
 
             z += run
             guard z < 64 else {
-                throw JPEG.DecodingError.invalidEntropyCodedSymbol
+                throw .decoding(.invalidEntropyCodedSymbol)
             }
 
             self.planes[component.plane][
