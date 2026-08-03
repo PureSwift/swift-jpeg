@@ -69,7 +69,7 @@ struct HuffmanTests {
     @Test
     func rejectsOverfullCodeSpace() {
         // Three codes of length 1 cannot be prefix-free — only two exist.
-        #expect(throws: JPEG.ParsingError.self) {
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
             _ = try JPEG.Table.Huffman(
                 counts: [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                 values: [0, 1, 2],
@@ -77,11 +77,14 @@ struct HuffmanTests {
                 class: .dc
             )
         }
+        // The stage is the useful part of the assertion: it says the failure
+        // was found where it should have been.
+        #expect(failure?.stage == JPEG.ParsingError.namespace)
     }
 
     @Test
     func rejectsSymbolCountMismatch() {
-        #expect(throws: JPEG.ParsingError.self) {
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
             _ = try JPEG.Table.Huffman(
                 counts: [0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                 values: [0],
@@ -89,6 +92,9 @@ struct HuffmanTests {
                 class: .dc
             )
         }
+        // The stage is the useful part of the assertion: it says the failure
+        // was found where it should have been.
+        #expect(failure?.stage == JPEG.ParsingError.namespace)
     }
 
     @Test
@@ -98,9 +104,12 @@ struct HuffmanTests {
         // nothing and must be reported rather than silently returning a symbol.
         var bits: JPEG.Bitstream = .init([0xFF, 0xFF, 0xFF])
 
-        #expect(throws: JPEG.DecodingError.self) {
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
             _ = try table.symbol(from: &bits)
         }
+        // The stage is the useful part of the assertion: it says the failure
+        // was found where it should have been.
+        #expect(failure?.stage == JPEG.DecodingError.namespace)
     }
 
     @Test
@@ -130,8 +139,11 @@ struct HuffmanTests {
         var data: [UInt8] = [0x20]
         data.append(contentsOf: [UInt8](repeating: 0, count: 16))
 
-        #expect(throws: JPEG.ParsingError.self) {
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
             _ = try JPEG.Table.Huffman.parse(data)
         }
+        // The stage is the useful part of the assertion: it says the failure
+        // was found where it should have been.
+        #expect(failure?.stage == JPEG.ParsingError.namespace)
     }
 }
