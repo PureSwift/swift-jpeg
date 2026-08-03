@@ -93,37 +93,60 @@ extension JPEG.IDCT {
         precision: Int,
         size n: Int
     ) -> [UInt16] {
+        var samples: [UInt16] = .init(repeating: 0, count: n * n)
+        samples.withUnsafeMutableBufferPointer { samples in
+            coefficients.withUnsafeBufferPointer { coefficients in
+                Self.transform(coefficients, precision: precision, size: n, into: samples)
+            }
+        }
+        return samples
+    }
+
+    /// Transforms one block into a buffer the caller owns.
+    ///
+    /// The array-returning form allocates its result, and a megapixel image is
+    /// twenty-odd thousand blocks — enough that the allocator, not the
+    /// transform, becomes the cost. Decoding uses this and reuses one buffer
+    /// for the whole plane.
+    static func transform(
+        _ coefficients: UnsafeBufferPointer<Int32>,
+        precision: Int,
+        size n: Int,
+        into samples: UnsafeMutableBufferPointer<UInt16>
+    ) {
         precondition(coefficients.count == 64)
         precondition(1 ... 8 ~= n)
+        precondition(samples.count >= n * n)
 
         let basis: [[Int32]] = Self.scaledBasis[n]
         let shift: Int32 = 1 << Int32(precision - 1)
         let ceiling: Int32 = (1 << Int32(precision)) - 1
 
-        var rows: [Int32] = .init(repeating: 0, count: n * n)
-        for y: Int in 0 ..< n {
-            for x: Int in 0 ..< n {
-                var sum: Int64 = 0
-                for u: Int in 0 ..< n {
-                    sum += .init(basis[u][x]) * .init(coefficients[y << 3 | u])
-                }
-                rows[y * n + x] = .init(truncatingIfNeeded: (sum + 128) >> 8)
-            }
-        }
-
-        var samples: [UInt16] = .init(repeating: 0, count: n * n)
-        for x: Int in 0 ..< n {
+        // One scratch block on the stack. The transform is separable, so the
+        // intermediate is exactly the same shape as the output.
+        withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { rows in
             for y: Int in 0 ..< n {
-                var sum: Int64 = 0
-                for v: Int in 0 ..< n {
-                    sum += .init(basis[v][y]) * .init(rows[v * n + x])
+                for x: Int in 0 ..< n {
+                    var sum: Int64 = 0
+                    for u: Int in 0 ..< n {
+                        sum += .init(basis[u][x]) * .init(coefficients[y << 3 | u])
+                    }
+                    rows[y * n + x] = .init(truncatingIfNeeded: (sum + 128) >> 8)
                 }
-                let value: Int32 = .init(truncatingIfNeeded: (sum + (1 << 19)) >> 20) + shift
-                samples[y * n + x] = .init(Swift.min(Swift.max(value, 0), ceiling))
+            }
+
+            for x: Int in 0 ..< n {
+                for y: Int in 0 ..< n {
+                    var sum: Int64 = 0
+                    for v: Int in 0 ..< n {
+                        sum += .init(basis[v][y]) * .init(rows[v * n + x])
+                    }
+                    let value: Int32 =
+                        .init(truncatingIfNeeded: (sum + (1 << 19)) >> 20) + shift
+                    samples[y * n + x] = .init(Swift.min(Swift.max(value, 0), ceiling))
+                }
             }
         }
-
-        return samples
     }
 
     /// Transforms one block of dequantized coefficients into samples.
