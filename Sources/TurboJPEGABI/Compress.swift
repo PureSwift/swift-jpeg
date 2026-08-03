@@ -64,9 +64,6 @@ public func tj3Compress8(
     if instance.parameter(TJPARAM_ARITHMETIC) != 0 {
         return instance.fail("arithmetic coding is not implemented")
     }
-    if instance.parameter(TJPARAM_PROGRESSIVE) != 0 {
-        return instance.fail("progressive compression is not implemented")
-    }
 
     let quality: Int32 = instance.parameter(TJPARAM_QUALITY, default: 95)
     let requested: Int32 = instance.parameter(TJPARAM_SUBSAMP, default: TJSAMP_444.rawValue)
@@ -131,6 +128,7 @@ public func tj3Compress8(
             stream: &encoded,
             quality: .init(quality),
             restartInterval: restartInterval,
+            progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0,
             metadata: instance.iccProfile.map(ICCProfile.segments(of:)) ?? []
         )
 
