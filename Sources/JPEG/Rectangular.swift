@@ -42,6 +42,50 @@ extension JPEG.Data.Rectangular {
         self.values[(y * self.width + x) * self.stride + plane]
     }
 
+    /// Returns the given rectangle of this image.
+    ///
+    /// Cropping at this tier is a copy, and exact at any offset. Cropping at
+    /// the spectral tier would be cheaper — whole blocks outside the region
+    /// need never be transformed — but only lands on block boundaries, so this
+    /// is the general answer and the other is an optimization for the aligned
+    /// case.
+    ///
+    /// -   Returns:
+    ///     `nil` if the rectangle is not wholly inside the image.
+    public func cropped(to region: (x: Int, y: Int, width: Int, height: Int)) -> Self? {
+        guard
+        region.x >= 0, region.y >= 0, region.width > 0, region.height > 0,
+        region.x + region.width <= self.width,
+        region.y + region.height <= self.height
+        else {
+            return nil
+        }
+
+        let stride: Int = self.stride
+        var values: [UInt16] = .init(
+            repeating: 0, count: region.width * region.height * stride
+        )
+        for y: Int in 0 ..< region.height {
+            for x: Int in 0 ..< region.width {
+                for plane: Int in 0 ..< stride {
+                    values[(y * region.width + x) * stride + plane] =
+                        self[x: region.x + x, y: region.y + y, plane]
+                }
+            }
+        }
+
+        var layout: JPEG.Layout<Format> = self.layout
+        layout.width = region.width
+        layout.height = region.height
+
+        return .init(
+            width: region.width,
+            height: region.height,
+            layout: layout,
+            values: values
+        )
+    }
+
     /// Converts the samples into an array of colors, one per pixel, row-major.
     public func unpack<Color>(as _: Color.Type) -> [Color]
         where Color: JPEG.Color, Color.Format == Format
@@ -138,5 +182,10 @@ extension JPEG.Data.Spectral {
     /// Decodes all the way down to interleaved full-resolution samples.
     public func rectangular() -> JPEG.Data.Rectangular<Format> {
         self.decomposed().interleaved()
+    }
+
+    /// Decodes to interleaved samples at `n/8` of the coded size.
+    public func rectangular(scale n: Int) -> JPEG.Data.Rectangular<Format> {
+        self.decomposed(scale: n).interleaved()
     }
 }
