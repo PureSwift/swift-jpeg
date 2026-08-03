@@ -17,6 +17,20 @@ final class Instance {
     /// What the handle was created for.
     let initType: Int32
 
+    /// The TurboJPEG API version the client was compiled against.
+    ///
+    /// Not a formality. libjpeg-turbo uses it to *withhold* features a client
+    /// could not have known about — `TJSAMP_410` and `TJSAMP_24` were added in
+    /// 3.2, and the `tjMCUWidth`/`tjMCUHeight` arrays a pre-3.2 client compiled
+    /// against are too short to describe them. Handing such a client one of
+    /// those values would make it index past the end of its own table.
+    let apiVersion: Int32
+
+    /// How many subsampling values this client may use.
+    var subsamplingLimit: Int32 {
+        self.apiVersion >= 3002000 ? 9 : 7
+    }
+
     /// Parameter values set through `tj3Set`, keyed by `TJPARAM`.
     ///
     /// A dictionary rather than stored properties because the parameter space
@@ -44,8 +58,9 @@ final class Instance {
     /// `Array`.
     var owned: Set<UInt>
 
-    init(initType: Int32) {
+    init(initType: Int32, apiVersion: Int32) {
         self.initType = initType
+        self.apiVersion = apiVersion
         self.parameters = [:]
         self.errorCode = TJERR_WARNING.id
         self.errorMessage = Instance.terminated("No error")
