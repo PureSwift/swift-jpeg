@@ -30,11 +30,23 @@ extension JPEG.Data.Spectral {
     /// class: a DC scan never names an AC table, and a stream is free to leave
     /// the other slot undefined at that point. Requiring both would reject
     /// perfectly valid files.
-    struct Resolved {
+    final class Resolved {
         let plane: Int
         let sampling: JPEG.Component.Sampling
         let dc: JPEG.Table.Huffman?
         let ac: JPEG.Table.Huffman?
+
+        init(
+            plane: Int,
+            sampling: JPEG.Component.Sampling,
+            dc: JPEG.Table.Huffman?,
+            ac: JPEG.Table.Huffman?
+        ) {
+            self.plane = plane
+            self.sampling = sampling
+            self.dc = dc
+            self.ac = ac
+        }
     }
 
     /// Decodes one scan into this image's coefficients.
