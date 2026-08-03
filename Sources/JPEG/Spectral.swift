@@ -92,12 +92,15 @@ extension JPEG.Data.Spectral.Plane {
     ///
     /// Avoids the copy ``block(x:y:)`` makes, which matters because decoding
     /// touches every block of every plane exactly once.
-    func withBlock<T>(
-        x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) throws -> T
-    ) rethrows -> T {
+    /// Generic over the thrown type rather than `rethrows`. A plain `rethrows`
+    /// propagates `any Error`, which would put an existential back into the
+    /// engine and take Embedded Swift away again.
+    func withBlock<T, E>(
+        x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) throws(E) -> T
+    ) throws(E) -> T {
         let base: Int = ((y * self.blocks.x) + x) * 64
-        return try self.buffer.withUnsafeBufferPointer {
-            try body(.init(rebasing: $0[base ..< base + 64]))
+        return try self.buffer.withUnsafeBufferPointer { (buffer) throws(E) in
+            try body(.init(rebasing: buffer[base ..< base + 64]))
         }
     }
 
