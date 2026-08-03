@@ -30,11 +30,6 @@ unsigned long TJBUFSIZEYUV(int width, int height, int jpegSubsamp)
   return 0;
 }
 
-int tjTransform(tjhandle handle, const unsigned char *jpegBuf, unsigned long jpegSize, int n, unsigned char **dstBufs, unsigned long *dstSizes, tjtransform *transforms, int flags)
-{
-  return -1;
-}
-
 unsigned char *tjLoadImage(const char *filename, int *width, int align, int *height, int *pixelFormat, int flags)
 {
   return NULL;
@@ -105,11 +100,6 @@ int tj3SetScalingFactor(tjhandle handle, tjscalingfactor scalingFactor)
   return -1;
 }
 
-int tj3Transform(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, int n, unsigned char **dstBufs, size_t *dstSizes, const tjtransform *transforms)
-{
-  return -1;
-}
-
 int tj3GetICCProfile(tjhandle handle, unsigned char **iccBuf, size_t *iccSize)
 {
   return -1;
@@ -118,10 +108,5 @@ int tj3GetICCProfile(tjhandle handle, unsigned char **iccBuf, size_t *iccSize)
 int tj3SetICCProfile(tjhandle handle, unsigned char *iccBuf, size_t iccSize)
 {
   return -1;
-}
-
-size_t tj3TransformBufSize(tjhandle handle, const tjtransform *transform)
-{
-  return 0;
 }
 
