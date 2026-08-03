@@ -100,37 +100,37 @@ extension JPEG.Header.Frame {
     /// -   Parameters:
     ///     -   data: The segment body, excluding the length field.
     ///     -   process: The coding process, which the marker code carried.
-    public static func parse(_ data: [UInt8], process: JPEG.Process) throws -> Self {
+    public static func parse(_ data: [UInt8], process: JPEG.Process) throws(JPEG.Failure) -> Self {
         guard data.count >= 6 else {
-            throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+            throw .parsing(.truncatedMarkerSegmentBody(
                 .frame(process),
                 count: data.count,
                 expected: 6 ... 6
-            )
+            ))
         }
 
         let precision: Int = .init(data[0])
         guard process.precisions.contains(precision) else {
-            throw JPEG.ParsingError.invalidFramePrecision(precision, process)
+            throw .parsing(.invalidFramePrecision(precision, process))
         }
 
         // Height precedes width, and height alone may be zero.
         let height: Int = .init(data[1]) << 8 | .init(data[2])
         let width: Int = .init(data[3]) << 8 | .init(data[4])
         guard width > 0 else {
-            throw JPEG.ParsingError.invalidFrameWidth(width)
+            throw .parsing(.invalidFrameWidth(width))
         }
 
         let count: Int = .init(data[5])
         guard count > 0 else {
-            throw JPEG.ParsingError.invalidFrameComponentCount(count, process)
+            throw .parsing(.invalidFrameComponentCount(count, process))
         }
         guard data.count == 6 + 3 * count else {
-            throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+            throw .parsing(.truncatedMarkerSegmentBody(
                 .frame(process),
                 count: data.count,
                 expected: (6 + 3 * count) ... (6 + 3 * count)
-            )
+            ))
         }
 
         var components: [JPEG.Component.Key: JPEG.Component] = [:]
@@ -144,12 +144,12 @@ extension JPEG.Header.Frame {
             let x: Int = .init(data[base + 1] >> 4)
             let y: Int = .init(data[base + 1] & 0x0F)
             guard 1 ... 4 ~= x, 1 ... 4 ~= y else {
-                throw JPEG.ParsingError.invalidFrameSamplingFactor(x: x, y: y, key)
+                throw .parsing(.invalidFrameSamplingFactor(x: x, y: y, key))
             }
 
             let selector: UInt8 = data[base + 2]
             guard selector < 4 else {
-                throw JPEG.ParsingError.invalidQuantizationTargetCode(selector)
+                throw .parsing(.invalidQuantizationTargetCode(selector))
             }
 
             guard components.updateValue(
@@ -160,7 +160,7 @@ extension JPEG.Header.Frame {
                 forKey: key
             ) == nil
             else {
-                throw JPEG.ParsingError.duplicateFrameComponentIndex(key)
+                throw .parsing(.duplicateFrameComponentIndex(key))
             }
             order.append(key)
         }
@@ -195,25 +195,25 @@ extension JPEG.Header.Scan {
     ///     -   data: The segment body, excluding the length field.
     ///     -   process: The coding process, which constrains the spectral
     ///         selection and successive approximation fields.
-    public static func parse(_ data: [UInt8], process: JPEG.Process) throws -> Self {
+    public static func parse(_ data: [UInt8], process: JPEG.Process) throws(JPEG.Failure) -> Self {
         guard data.count >= 4 else {
-            throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+            throw .parsing(.truncatedMarkerSegmentBody(
                 .scan,
                 count: data.count,
                 expected: 4 ... 4
-            )
+            ))
         }
 
         let count: Int = .init(data[0])
         guard 1 ... 4 ~= count else {
-            throw JPEG.ParsingError.invalidScanComponentCount(count)
+            throw .parsing(.invalidScanComponentCount(count))
         }
         guard data.count == 4 + 2 * count else {
-            throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+            throw .parsing(.truncatedMarkerSegmentBody(
                 .scan,
                 count: data.count,
                 expected: (4 + 2 * count) ... (4 + 2 * count)
-            )
+            ))
         }
 
         var components: [JPEG.ScanComponent] = []
@@ -224,10 +224,10 @@ extension JPEG.Header.Scan {
             let dc: UInt8 = data[base + 1] >> 4
             let ac: UInt8 = data[base + 1] & 0x0F
             guard dc < 4 else {
-                throw JPEG.ParsingError.invalidHuffmanTargetCode(dc)
+                throw .parsing(.invalidHuffmanTargetCode(dc))
             }
             guard ac < 4 else {
-                throw JPEG.ParsingError.invalidHuffmanTargetCode(ac)
+                throw .parsing(.invalidHuffmanTargetCode(ac))
             }
 
             components.append(
@@ -253,12 +253,12 @@ extension JPEG.Header.Scan {
         // reject every conforming lossless image.
         if case .lossless = process {
             guard 1 ... 7 ~= start, end == 0 else {
-                throw JPEG.ParsingError.invalidPredictor(start)
+                throw .parsing(.invalidPredictor(start))
             }
             guard high == 0 else {
-                throw JPEG.ParsingError.invalidScanSuccessiveApproximation(
+                throw .parsing(.invalidScanSuccessiveApproximation(
                     high: high, low: low
-                )
+                ))
             }
             return .init(
                 band: start ..< start + 1,
@@ -271,19 +271,19 @@ extension JPEG.Header.Scan {
         // constructing `start ..< end` directly would trap before the error
         // could be thrown.
         guard start <= end, end < 64 else {
-            throw JPEG.ParsingError.invalidScanBandRange(
+            throw .parsing(.invalidScanBandRange(
                 start ..< Swift.max(start, end) + 1,
                 process
-            )
+            ))
         }
         if !process.isProgressive, start != 0 || end != 63 {
-            throw JPEG.ParsingError.invalidScanBandRange(start ..< end + 1, process)
+            throw .parsing(.invalidScanBandRange(start ..< end + 1, process))
         }
 
         // The successive approximation high field is either zero, for a first
         // pass, or exactly one more than the low field, for a refinement.
         guard high == 0 || high == low + 1 else {
-            throw JPEG.ParsingError.invalidScanSuccessiveApproximation(high: high, low: low)
+            throw .parsing(.invalidScanSuccessiveApproximation(high: high, low: low))
         }
 
         if process.isProgressive {
@@ -291,12 +291,12 @@ extension JPEG.Header.Scan {
             // would mix DC and AC coding in one pass, which the standard does
             // not define.
             if start == 0, end != 0 {
-                throw JPEG.ParsingError.invalidScanBandRange(start ..< end + 1, process)
+                throw .parsing(.invalidScanBandRange(start ..< end + 1, process))
             }
             // An AC scan has no interleaving to define, since an MCU made of
             // partial blocks is meaningless.
             if start != 0, count != 1 {
-                throw JPEG.ParsingError.invalidScanComponentCount(count)
+                throw .parsing(.invalidScanComponentCount(count))
             }
         }
 
@@ -340,13 +340,13 @@ extension JPEG.Header.Scan {
 
 extension JPEG.Header.HeightRedefinition {
     /// Parses the body of a define-number-of-lines segment.
-    public static func parse(_ data: [UInt8]) throws -> Self {
+    public static func parse(_ data: [UInt8]) throws(JPEG.Failure) -> Self {
         guard data.count == 2 else {
-            throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+            throw .parsing(.truncatedMarkerSegmentBody(
                 .height,
                 count: data.count,
                 expected: 2 ... 2
-            )
+            ))
         }
         return .init(height: .init(data[0]) << 8 | .init(data[1]))
     }
@@ -354,13 +354,13 @@ extension JPEG.Header.HeightRedefinition {
 
 extension JPEG.Header.RestartInterval {
     /// Parses the body of a define-restart-interval segment.
-    public static func parse(_ data: [UInt8]) throws -> Self {
+    public static func parse(_ data: [UInt8]) throws(JPEG.Failure) -> Self {
         guard data.count == 2 else {
-            throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+            throw .parsing(.truncatedMarkerSegmentBody(
                 .restartInterval,
                 count: data.count,
                 expected: 2 ... 2
-            )
+            ))
         }
         return .init(interval: .init(data[0]) << 8 | .init(data[1]))
     }
