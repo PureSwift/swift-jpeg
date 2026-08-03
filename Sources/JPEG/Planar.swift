@@ -18,7 +18,7 @@ extension JPEG.Data {
             /// this one from being written twice.
             private var buffer: [UInt16]
 
-            init(size: (x: Int, y: Int)) {
+            public init(size: (x: Int, y: Int)) {
                 self.size = size
                 self.buffer = .init(repeating: 0, count: size.x * size.y)
             }
@@ -55,6 +55,23 @@ extension JPEG.Data {
 }
 
 extension JPEG.Data.Planar {
+    /// Creates a zeroed image sized for the given layout.
+    ///
+    /// Planes come out padded to whole blocks, which is larger than each
+    /// component's own resolution. A caller filling one in is expected to
+    /// extend the last real sample into that padding rather than leave it at
+    /// zero, for the same reason subsampling does: a step to black at the edge
+    /// is a discontinuity the transform has to spend bits encoding.
+    public init(layout: JPEG.Layout<Format>) {
+        self.init(
+            planes: layout.planes.indices.map {
+                let blocks: (x: Int, y: Int) = layout.blocks(plane: $0)
+                return .init(size: (x: blocks.x * 8, y: blocks.y * 8))
+            },
+            layout: layout
+        )
+    }
+
     /// The image size, in samples.
     public var size: (x: Int, y: Int) {
         (x: self.layout.width, y: self.layout.height)
@@ -63,6 +80,9 @@ extension JPEG.Data.Planar {
     public subscript(plane: Int) -> Plane {
         _read {
             yield self.planes[plane]
+        }
+        _modify {
+            yield &self.planes[plane]
         }
     }
 }
