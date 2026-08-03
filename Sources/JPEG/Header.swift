@@ -247,6 +247,26 @@ extension JPEG.Header.Scan {
 
         // A sequential scan must cover the whole block; T.81 requires Ss = 0
         // and Se = 63 in that case, and the encoded `end` is inclusive.
+        // A lossless scan reuses these two fields for something else entirely:
+        // Ss carries the predictor selection value and Se is zero. Nothing
+        // below applies to it, and reading them as a spectral band would
+        // reject every conforming lossless image.
+        if case .lossless = process {
+            guard 1 ... 7 ~= start, end == 0 else {
+                throw JPEG.ParsingError.invalidPredictor(start)
+            }
+            guard high == 0 else {
+                throw JPEG.ParsingError.invalidScanSuccessiveApproximation(
+                    high: high, low: low
+                )
+            }
+            return .init(
+                band: start ..< start + 1,
+                bits: low ..< Int.max,
+                components: components
+            )
+        }
+
         // `Swift.max` keeps the reported range well-formed when start > end;
         // constructing `start ..< end` directly would trap before the error
         // could be thrown.
