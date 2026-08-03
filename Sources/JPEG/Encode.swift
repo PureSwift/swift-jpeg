@@ -73,7 +73,7 @@ extension JPEG.Data.Spectral {
         scan: JPEG.Header.Scan,
         encoders: JPEG.Encoders,
         restartInterval: Int
-    ) throws -> [UInt8] {
+    ) throws(JPEG.Failure) -> [UInt8] {
         let process: JPEG.Process = self.layout.process
         switch process {
         case .baseline,
@@ -81,7 +81,7 @@ extension JPEG.Data.Spectral {
              .progressive(coding: .huffman, differential: false):
             break
         default:
-            throw JPEG.EncodingError.unsupportedProcess(process)
+            throw .encoding(.unsupportedProcess(process))
         }
 
         let kind: JPEG.Header.Scan.Kind = scan.kind(process: process)
@@ -95,23 +95,24 @@ extension JPEG.Data.Spectral {
 
         let planes: [Int] = try self.layout.validate(scan: scan)
         let bound: [Bound] = try zip(planes, scan.components).map {
+            (plane, component) throws(JPEG.Failure) -> Bound in
             var dc: JPEG.Table.Huffman.Encoder?
             var ac: JPEG.Table.Huffman.Encoder?
             if needsDC {
-                guard let table: JPEG.Table.Huffman.Encoder = encoders.dc[$1.dc] else {
-                    throw JPEG.EncodingError.undefinedHuffmanTable($1.dc, .dc)
+                guard let table: JPEG.Table.Huffman.Encoder = encoders.dc[component.dc] else {
+                    throw .encoding(.undefinedHuffmanTable(component.dc, .dc))
                 }
                 dc = table
             }
             if needsAC {
-                guard let table: JPEG.Table.Huffman.Encoder = encoders.ac[$1.ac] else {
-                    throw JPEG.EncodingError.undefinedHuffmanTable($1.ac, .ac)
+                guard let table: JPEG.Table.Huffman.Encoder = encoders.ac[component.ac] else {
+                    throw .encoding(.undefinedHuffmanTable(component.ac, .ac))
                 }
                 ac = table
             }
             return .init(
-                plane: $0,
-                sampling: self.layout.planes[$0].sampling,
+                plane: plane,
+                sampling: self.layout.planes[plane].sampling,
                 dc: dc,
                 ac: ac
             )
@@ -235,7 +236,7 @@ extension JPEG.Data.Spectral {
         of component: Bound,
         to bits: inout JPEG.BitstreamWriter,
         predictor: inout Int32
-    ) throws {
+    ) throws(JPEG.Failure) {
         guard
         let dc: JPEG.Table.Huffman.Encoder = component.dc,
         let ac: JPEG.Table.Huffman.Encoder = component.ac
@@ -248,7 +249,7 @@ extension JPEG.Data.Spectral {
         // something here.
         guard self.planes[component.plane].contains(x: block.x, y: block.y) else {
             return try withUnsafeTemporaryAllocation(of: Int16.self, capacity: 64) {
-                zeros in
+                (zeros) throws(JPEG.Failure) in
                 zeros.initialize(repeating: 0)
                 return try Self.encode(
                     .init(zeros), dc: dc, ac: ac, to: &bits, predictor: &predictor
@@ -257,7 +258,8 @@ extension JPEG.Data.Spectral {
         }
 
         try self.planes[component.plane].withBlock(x: block.x, y: block.y) {
-            try Self.encode($0, dc: dc, ac: ac, to: &bits, predictor: &predictor)
+            (coefficients) throws(JPEG.Failure) in
+            try Self.encode(coefficients, dc: dc, ac: ac, to: &bits, predictor: &predictor)
         }
     }
 
@@ -273,7 +275,7 @@ extension JPEG.Data.Spectral {
         ac: JPEG.Table.Huffman.Encoder,
         to bits: inout JPEG.BitstreamWriter,
         predictor: inout Int32
-    ) throws {
+    ) throws(JPEG.Failure) {
         // The DC coefficient goes out as a difference from the previous block
         // of the same component.
         let value: Int32 = .init(coefficients[0])
@@ -283,7 +285,7 @@ extension JPEG.Data.Spectral {
         let amplitude: (category: Int, bits: UInt16) =
             JPEG.BitstreamWriter.amplitude(of: difference)
         guard amplitude.category <= 15 else {
-            throw JPEG.EncodingError.coefficientOutOfRange(difference)
+            throw .encoding(.coefficientOutOfRange(difference))
         }
         try dc.encode(.init(truncatingIfNeeded: amplitude.category), to: &bits)
         bits.write(amplitude.bits, count: amplitude.category)
@@ -308,7 +310,7 @@ extension JPEG.Data.Spectral {
             let amplitude: (category: Int, bits: UInt16) =
                 JPEG.BitstreamWriter.amplitude(of: value)
             guard amplitude.category <= 15 else {
-                throw JPEG.EncodingError.coefficientOutOfRange(value)
+                throw .encoding(.coefficientOutOfRange(value))
             }
             try ac.encode(
                 .init(truncatingIfNeeded: run << 4 | amplitude.category),
