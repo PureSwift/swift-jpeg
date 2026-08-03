@@ -175,25 +175,45 @@ extension JPEG.Data.Planar {
             }
 
             let blocks: (x: Int, y: Int) = spectral.planes[plane].blocks
-            var samples: [UInt16] = .init(repeating: 0, count: 64)
+            let extent: (x: Int, y: Int) = self.planes[plane].size
 
-            for by: Int in 0 ..< blocks.y {
-                for bx: Int in 0 ..< blocks.x {
-                    for i: Int in 0 ..< 64 {
-                        samples[i] = self.planes[plane][
-                            x: bx * 8 + (i & 7),
-                            y: by * 8 + (i >> 3)
-                        ]
-                    }
+            // Three scratch blocks for the whole plane. The array-returning
+            // transform and quantize allocate one each per block, and a
+            // megapixel image is twenty-odd thousand blocks per plane.
+            withUnsafeTemporaryAllocation(of: UInt16.self, capacity: 64) { samples in
+            withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { coefficients in
+            withUnsafeTemporaryAllocation(of: Int16.self, capacity: 64) { levels in
+                self.planes[plane].withSamples { source in
+                    for by: Int in 0 ..< blocks.y {
+                        for bx: Int in 0 ..< blocks.x {
+                            // The plane is padded to whole blocks, so every
+                            // block is inside it and the row offsets are a
+                            // straight multiply.
+                            for row: Int in 0 ..< 8 {
+                                let base: Int = (by * 8 + row) * extent.x + bx * 8
+                                for column: Int in 0 ..< 8 {
+                                    samples[row << 3 | column] = source[base + column]
+                                }
+                            }
 
-                    let levels: [Int16] = JPEG.FDCT.quantize(
-                        JPEG.FDCT.transform(samples, precision: precision),
-                        by: table
-                    )
-                    for i: Int in 0 ..< 64 {
-                        spectral.planes[plane][x: bx, y: by, z: i] = levels[i]
+                            JPEG.FDCT.transform8(
+                                .init(samples), precision: precision, into: coefficients
+                            )
+                            JPEG.FDCT.quantize(
+                                .init(coefficients), by: table, into: levels
+                            )
+
+                            spectral.planes[plane].withBlockRow(by) { destination in
+                                let base: Int = bx * 64
+                                for z: Int in 0 ..< 64 {
+                                    destination[base + z] = levels[z]
+                                }
+                            }
+                        }
                     }
                 }
+            }
+            }
             }
         }
 
