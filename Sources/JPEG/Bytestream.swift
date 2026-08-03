@@ -55,18 +55,18 @@ extension JPEG.Bytestream.Source {
     ///
     /// -   Parameter first:
     ///     The byte that introduced this marker, already read by the caller.
-    private mutating func markerCode(after first: UInt8) throws -> JPEG.Marker {
+    private mutating func markerCode(after first: UInt8) throws(JPEG.Failure) -> JPEG.Marker {
         var byte: UInt8 = first
         // Consume the fill run. The last 0xFF is the marker prefix proper.
         while byte == 0xFF {
             guard let next: UInt8 = self.byte() else {
-                throw JPEG.LexingError.truncatedMarkerSegmentType
+                throw .lexing(.truncatedMarkerSegmentType)
             }
             byte = next
         }
 
         guard let marker: JPEG.Marker = .init(code: byte) else {
-            throw JPEG.LexingError.invalidMarkerSegmentPrefix(byte)
+            throw .lexing(.invalidMarkerSegmentPrefix(byte))
         }
         return marker
     }
@@ -75,14 +75,14 @@ extension JPEG.Bytestream.Source {
     ///
     /// The two-byte length is big-endian and counts itself, so the body is two
     /// bytes shorter than the field states.
-    private mutating func body() throws -> [UInt8] {
+    private mutating func body() throws(JPEG.Failure) -> [UInt8] {
         guard let header: [UInt8] = self.read(count: 2) else {
-            throw JPEG.LexingError.truncatedMarkerSegmentHeader
+            throw .lexing(.truncatedMarkerSegmentHeader)
         }
 
         let length: Int = .init(header[0]) << 8 | .init(header[1])
         guard length >= 2 else {
-            throw JPEG.LexingError.invalidMarkerSegmentLength(length)
+            throw .lexing(.invalidMarkerSegmentLength(length))
         }
 
         let count: Int = length - 2
@@ -90,7 +90,7 @@ extension JPEG.Bytestream.Source {
             return []
         }
         guard let body: [UInt8] = self.read(count: count) else {
-            throw JPEG.LexingError.truncatedMarkerSegmentBody(expected: count)
+            throw .lexing(.truncatedMarkerSegmentBody(expected: count))
         }
         return body
     }
@@ -100,7 +100,7 @@ extension JPEG.Bytestream.Source {
     /// Throws if entropy coded data is encountered, since a caller using this
     /// method is not expecting any. Use ``segment(prefix:)`` after a scan
     /// header instead.
-    public mutating func segment() throws -> (JPEG.Marker, [UInt8]) {
+    public mutating func segment() throws(JPEG.Failure) -> (JPEG.Marker, [UInt8]) {
         let (ecs, segment): ([UInt8], (JPEG.Marker, [UInt8])) = try self.segment(prefix: false)
         // `prefix: false` discards rather than collects, so this is a
         // consistency check on the lexer, not on the input.
@@ -130,15 +130,15 @@ extension JPEG.Bytestream.Source {
     /// -   Returns:
     ///     The entropy coded data, empty unless `prefix` was `true`, and the
     ///     marker segment that terminated it.
-    public mutating func segment(prefix: Bool) throws -> ([UInt8], (JPEG.Marker, [UInt8])) {
+    public mutating func segment(prefix: Bool) throws(JPEG.Failure) -> ([UInt8], (JPEG.Marker, [UInt8])) {
         var ecs: [UInt8] = []
 
         scan:
         while true {
             guard let byte: UInt8 = self.byte() else {
                 throw prefix
-                    ? JPEG.LexingError.truncatedEntropyCodedSegment
-                    : JPEG.LexingError.truncatedMarkerSegmentType
+                    ? JPEG.Failure.lexing(.truncatedEntropyCodedSegment)
+                    : JPEG.Failure.lexing(.truncatedMarkerSegmentType)
             }
 
             guard byte == 0xFF else {
@@ -151,8 +151,8 @@ extension JPEG.Bytestream.Source {
             // 0xFF: either a stuffed literal, a fill byte, or a real marker.
             guard let next: UInt8 = self.byte() else {
                 throw prefix
-                    ? JPEG.LexingError.truncatedEntropyCodedSegment
-                    : JPEG.LexingError.truncatedMarkerSegmentType
+                    ? JPEG.Failure.lexing(.truncatedEntropyCodedSegment)
+                    : JPEG.Failure.lexing(.truncatedMarkerSegmentType)
             }
 
             switch next {
@@ -183,10 +183,10 @@ extension JPEG.Bytestream.Source {
     }
 
     /// Reads the start-of-image marker that must open the stream.
-    public mutating func start() throws {
+    public mutating func start() throws(JPEG.Failure) {
         let (marker, _): (JPEG.Marker, [UInt8]) = try self.segment()
         guard case .start = marker else {
-            throw JPEG.LexingError.invalidStartOfImage(marker)
+            throw .lexing(.invalidStartOfImage(marker))
         }
     }
 }
