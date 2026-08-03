@@ -118,9 +118,12 @@ struct BitstreamTests {
         // to detect.
         let data: [UInt8] = [0x11, 0xFF, 0xD3, 0x22]
 
-        #expect(throws: JPEG.DecodingError.self) {
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
             _ = try JPEG.Bitstream.intervals(of: data, restartInterval: 1)
         }
+        // The stage is the useful part of the assertion: it says the failure
+        // was found where it should have been.
+        #expect(failure?.stage == JPEG.DecodingError.namespace)
     }
 
     @Test
