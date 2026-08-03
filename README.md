@@ -20,7 +20,7 @@ stock TurboJPEG header can link and use.
 | Progressive decode | ✅ |
 | Baseline encoding | ✅ |
 | Optimized Huffman tables | ✅ |
-| Progressive encoding | ❌ not yet |
+| Progressive encoding | ✅ |
 | 12-bit precision | ✅ |
 | Scaled and cropped decoding | ✅ |
 | JFIF / EXIF metadata | ❌ not yet |
@@ -89,6 +89,16 @@ meaning for its components — a frame header lists identifiers and sampling
 factors and stops there. A component set the library does not recognize becomes
 a *nonconforming* format instead of an error, so the image still decodes to
 planes and only the color reading is left to the caller.
+
+Entropy coding is Huffman throughout. The Annex K sample tables are used where
+they suffice, since matching what every other encoder emits keeps output
+comparable — and minimum-redundancy tables built from the image's own symbol
+statistics where they do not. Which applies is decided by trial rather than by
+rule: encode with the standard tables, and rebuild if any symbol turns out to
+have no code. 12-bit samples always need the built tables, since they reach
+magnitude categories past the eleven Annex K covers, and every progressive scan
+gets its own because a DC first pass and a full-band refinement have nothing
+statistically in common.
 
 Errors are split by pipeline stage — lexing, parsing, decoding — so the stage
 localizes the fault: bytes not shaped like a JPEG, versus a segment whose
