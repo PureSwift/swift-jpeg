@@ -28,6 +28,13 @@ extension JPEG.Data {
                 self.buffer.withUnsafeBufferPointer(body)
             }
 
+            /// Runs `body` on this plane's samples, row-major and writable.
+            mutating func withMutableSamples<T>(
+                _ body: (UnsafeMutableBufferPointer<UInt16>) -> T
+            ) -> T {
+                self.buffer.withUnsafeMutableBufferPointer { body($0) }
+            }
+
             /// Copies an `n`×`n` block of samples in at `(x, y)`.
             ///
             /// A block at a time rather than a sample at a time, so the bounds
