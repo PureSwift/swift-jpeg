@@ -196,8 +196,10 @@ extension JPEG.Data.Planar {
                                 }
                             }
 
-                            JPEG.FDCT.transform8(
-                                .init(samples), precision: precision, into: coefficients
+                            JPEG.Kernel.forwardTransform(
+                                samples.baseAddress!,
+                                .init(precision),
+                                coefficients.baseAddress!
                             )
                             JPEG.FDCT.quantize(
                                 .init(coefficients), by: table, into: levels
