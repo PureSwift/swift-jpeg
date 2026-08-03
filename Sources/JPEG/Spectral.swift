@@ -53,7 +53,7 @@ extension JPEG.Data {
         /// place; callers outside it get read-only access.
         public internal(set) var planes: [Plane]
         /// The image geometry and component structure.
-        public private(set) var layout: JPEG.Layout<Format>
+        public internal(set) var layout: JPEG.Layout<Format>
         /// The quantization tables in effect, keyed by slot.
         ///
         /// Held alongside the coefficients rather than applied to them, because
@@ -133,6 +133,24 @@ extension JPEG.Data.Spectral {
         _modify {
             yield &self.planes[plane]
         }
+    }
+
+    /// Returns this image re-labelled for a different coding process.
+    ///
+    /// The coefficients are untouched — only the process that will be written
+    /// into the frame header changes. Baseline, extended sequential and
+    /// progressive all describe the same quantized coefficients and differ only
+    /// in how those are packed into scans, so switching between them costs
+    /// nothing and loses nothing.
+    ///
+    /// Returns `nil` if the process cannot carry this image's sample precision.
+    public func reprocessed(as process: JPEG.Process) -> Self? {
+        guard process.precisions.contains(self.layout.format.precision) else {
+            return nil
+        }
+        var image: Self = self
+        image.layout.process = process
+        return image
     }
 
     /// Records the image height once a `DNL` segment supplies it.
