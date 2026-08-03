@@ -167,4 +167,25 @@ extension JPEG.Table.Quantization {
     public subscript(z z: Int) -> UInt16 {
         self.factors[z]
     }
+
+    /// Returns this table with its two frequency axes exchanged.
+    ///
+    /// Required by any transform that transposes an image. Moving a
+    /// coefficient from horizontal frequency `u` to vertical frequency `u`
+    /// without moving its quantization factor with it would dequantize it by
+    /// the wrong number.
+    ///
+    /// The mistake hides well: the Annex K *chrominance* table is symmetric, so
+    /// chroma looks perfect while luminance — whose table is not symmetric,
+    /// with 11 against 12 in the very first off-diagonal pair — comes out
+    /// subtly wrong everywhere.
+    public func transposed() -> Self {
+        var factors: [UInt16] = .init(repeating: 0, count: 64)
+        for v: Int in 0 ..< 8 {
+            for u: Int in 0 ..< 8 {
+                factors[u << 3 | v] = self.factors[v << 3 | u]
+            }
+        }
+        return .init(factors: factors, target: self.target, precision: self.precision)
+    }
 }
