@@ -112,6 +112,66 @@ extension JPEG.Data.Spectral {
         )
     }
 
+    /// Returns tables that can actually code this image.
+    ///
+    /// The Annex K tables are used when they suffice, because matching what
+    /// every other encoder emits keeps output comparable. When they do not —
+    /// 12-bit samples reach magnitude categories past the eleven those tables
+    /// cover — tables are built from the image's own symbol statistics instead.
+    ///
+    /// Deciding by trial rather than by rule: encode once with the given tables
+    /// and see whether any symbol has no code. That is exact, where a rule
+    /// about precision would be a guess about which images need it.
+    ///
+    /// The successful attempt's output is kept rather than discarded, so the
+    /// common case — an image the standard tables handle — encodes exactly
+    /// once. Only an image that needs optimal tables pays for a second pass.
+    func coded(
+        given tables: JPEG.Tables,
+        scan: JPEG.Header.Scan,
+        restartInterval: Int
+    ) throws -> (tables: JPEG.Tables, ecs: [UInt8]) {
+        do {
+            return (
+                tables,
+                try self.encode(
+                    scan: scan, encoders: .init(tables), restartInterval: restartInterval
+                )
+            )
+        } catch JPEG.EncodingError.unencodableSymbol {
+            // Fall through and build tables that cover whatever this image
+            // actually produces.
+        }
+
+        let counting = JPEG.Encoders.counting(like: tables)
+
+        _ = try self.encode(
+            scan: scan, encoders: counting.encoders, restartInterval: restartInterval
+        )
+
+        var optimized: JPEG.Tables = .init()
+        for (key, counter): (JPEG.Table.Huffman.Key, JPEG.Table.Huffman.Encoder.Counter)
+            in counting.dc
+        {
+            optimized.push(
+                try .optimal(frequencies: counter.frequencies, target: key, class: .dc)
+            )
+        }
+        for (key, counter): (JPEG.Table.Huffman.Key, JPEG.Table.Huffman.Encoder.Counter)
+            in counting.ac
+        {
+            optimized.push(
+                try .optimal(frequencies: counter.frequencies, target: key, class: .ac)
+            )
+        }
+        return (
+            optimized,
+            try self.encode(
+                scan: scan, encoders: .init(optimized), restartInterval: restartInterval
+            )
+        )
+    }
+
     /// A single interleaved scan covering every component and every
     /// coefficient.
     ///
@@ -143,6 +203,10 @@ extension JPEG.Data.Spectral {
     ) throws where Destination: JPEG.Bytestream.Destination {
         let frame: JPEG.Header.Frame = try self.frame()
         let scan: JPEG.Header.Scan = self.scan()
+        let coded: (tables: JPEG.Tables, ecs: [UInt8]) = try self.coded(
+            given: tables, scan: scan, restartInterval: restartInterval
+        )
+        let tables: JPEG.Tables = coded.tables
 
         try stream.format(marker: .start)
 
@@ -189,11 +253,8 @@ extension JPEG.Data.Spectral {
 
         try stream.format(marker: .scan, body: scan.serialized())
 
-        let ecs: [UInt8] = try self.encode(
-            scan: scan,
-            encoders: .init(tables),
-            restartInterval: restartInterval
-        )
+        let ecs: [UInt8] = coded.ecs
+
         guard stream.write(ecs) != nil else {
             throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
         }
@@ -214,19 +275,29 @@ extension JPEG.Data.Planar {
         quality: Int = 85,
         restartInterval: Int = 0
     ) throws where Destination: JPEG.Bytestream.Destination {
-        guard self.layout.format.precision == 8 else {
-            throw JPEG.EncodingError.unsupportedPrecision(self.layout.format.precision)
+        let precision: Int = self.layout.format.precision
+        // Baseline is 8-bit by definition; 12-bit samples need the extended
+        // sequential process, which is the same coding under a different
+        // start-of-frame marker.
+        let process: JPEG.Process = precision == 8
+            ? .baseline
+            : .extended(coding: .huffman, differential: false)
+        guard process.precisions.contains(precision) else {
+            throw JPEG.EncodingError.unsupportedPrecision(precision)
         }
+        let baseline: Bool = process == .baseline
 
         var quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization] = [:]
         var tables: JPEG.Tables = .init()
 
-        quanta[0] = .standard(.luminance, quality: quality, target: 0)
+        quanta[0] = .standard(.luminance, quality: quality, target: 0, baseline: baseline)
         tables.push(try .standard(.luminance, class: .dc, target: 0))
         tables.push(try .standard(.luminance, class: .ac, target: 0))
 
         if self.layout.planes.count > 1 {
-            quanta[1] = .standard(.chrominance, quality: quality, target: 1)
+            quanta[1] = .standard(
+                .chrominance, quality: quality, target: 1, baseline: baseline
+            )
             tables.push(try .standard(.chrominance, class: .dc, target: 1))
             tables.push(try .standard(.chrominance, class: .ac, target: 1))
         }
@@ -254,21 +325,31 @@ extension JPEG.Data.Rectangular {
         quality: Int = 85,
         restartInterval: Int = 0
     ) throws where Destination: JPEG.Bytestream.Destination {
-        guard self.layout.format.precision == 8 else {
-            throw JPEG.EncodingError.unsupportedPrecision(self.layout.format.precision)
+        let precision: Int = self.layout.format.precision
+        // Baseline is 8-bit by definition; 12-bit samples need the extended
+        // sequential process, which is the same coding under a different
+        // start-of-frame marker.
+        let process: JPEG.Process = precision == 8
+            ? .baseline
+            : .extended(coding: .huffman, differential: false)
+        guard process.precisions.contains(precision) else {
+            throw JPEG.EncodingError.unsupportedPrecision(precision)
         }
+        let baseline: Bool = process == .baseline
 
         var quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization] = [:]
         var tables: JPEG.Tables = .init()
 
         // Slot 0 carries luminance and slot 1 chrominance, which is the
         // arrangement every decoder expects and several tools assume.
-        quanta[0] = .standard(.luminance, quality: quality, target: 0)
+        quanta[0] = .standard(.luminance, quality: quality, target: 0, baseline: baseline)
         tables.push(try .standard(.luminance, class: .dc, target: 0))
         tables.push(try .standard(.luminance, class: .ac, target: 0))
 
         if self.layout.planes.count > 1 {
-            quanta[1] = .standard(.chrominance, quality: quality, target: 1)
+            quanta[1] = .standard(
+                .chrominance, quality: quality, target: 1, baseline: baseline
+            )
             tables.push(try .standard(.chrominance, class: .dc, target: 1))
             tables.push(try .standard(.chrominance, class: .ac, target: 1))
         }
@@ -277,7 +358,7 @@ extension JPEG.Data.Rectangular {
         // quantized with, rather than whatever it carried in.
         let layout: JPEG.Layout<Format> = try .init(
             format: self.layout.format,
-            process: .baseline,
+            process: process,
             width: self.width,
             height: self.height,
             sampling: self.layout.planes.map(\.sampling),
