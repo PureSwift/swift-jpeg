@@ -61,9 +61,11 @@ extension Instance {
                 format: gray
                     ? .y(1, precision: precision)
                     : .ycc(1, 2, 3, precision: precision),
-                process: precision == 8
-                    ? .baseline
-                    : .extended(coding: .huffman, differential: false),
+                process: self.parameter(TJPARAM_PROGRESSIVE) != 0
+                    ? .progressive(coding: .huffman, differential: false)
+                    : precision == 8
+                        ? .baseline
+                        : .extended(coding: .huffman, differential: false),
                 width: .init(width),
                 height: .init(height),
                 sampling: gray
@@ -113,7 +115,8 @@ extension Instance {
             var encoded: [UInt8] = []
             try image.compress(
                 stream: &encoded,
-                quality: .init(self.parameter(TJPARAM_QUALITY, default: 95))
+                quality: .init(self.parameter(TJPARAM_QUALITY, default: 95)),
+                progressive: self.parameter(TJPARAM_PROGRESSIVE) != 0
             )
 
             if self.parameter(TJPARAM_NOREALLOC) != 0, let destination = jpegBuf.pointee {
