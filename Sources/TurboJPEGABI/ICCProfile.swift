@@ -54,7 +54,7 @@ enum ICCProfile {
     /// Chunks are placed by their stated index rather than by arrival order, so
     /// a stream that writes them out of order still reassembles correctly.
     static func profile(in jpeg: [UInt8]) throws -> [UInt8]? {
-        var stream: [UInt8] = jpeg
+        var stream: JPEG.Bytestream.Cursor = .init(jpeg)
         try stream.start()
 
         var chunks: [Int: [UInt8]] = [:]
