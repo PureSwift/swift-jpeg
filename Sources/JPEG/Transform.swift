@@ -254,3 +254,58 @@ extension JPEG.Data.Spectral {
         return output
     }
 }
+
+extension JPEG.Data.Spectral {
+    /// Returns the given rectangle of this image, without re-coding it.
+    ///
+    /// Lossless, unlike cropping decoded pixels: whole blocks are carried over
+    /// untouched, so nothing is dequantized, transformed or requantized. The
+    /// price is that the origin must land on a block boundary in every plane at
+    /// once — which is to say on a minimum coded unit.
+    ///
+    /// -   Returns:
+    ///     `nil` if the origin is not MCU-aligned or the rectangle leaves the
+    ///     image.
+    public func cropped(to region: (x: Int, y: Int, width: Int, height: Int)) -> Self? {
+        let mcu: (x: Int, y: Int) = (x: 8 * self.layout.scale.x, y: 8 * self.layout.scale.y)
+        guard
+        region.x >= 0, region.y >= 0, region.width > 0, region.height > 0,
+        region.x % mcu.x == 0, region.y % mcu.y == 0,
+        region.x + region.width <= self.layout.width,
+        region.y + region.height <= self.layout.height
+        else {
+            return nil
+        }
+
+        var layout: JPEG.Layout<Format> = self.layout
+        layout.width = region.width
+        layout.height = region.height
+
+        var output: Self = .init(layout: layout)
+        output.quanta = self.quanta
+
+        for plane: Int in self.planes.indices {
+            let sampling: JPEG.Component.Sampling = self.layout.planes[plane].sampling
+            // The origin is a whole number of MCUs, so this division is exact
+            // in every plane however coarsely it is sampled.
+            let offset: (x: Int, y: Int) = (
+                x: region.x * sampling.x / (self.layout.scale.x * 8),
+                y: region.y * sampling.y / (self.layout.scale.y * 8)
+            )
+            let blocks: (x: Int, y: Int) = output.planes[plane].blocks
+
+            for y: Int in 0 ..< blocks.y {
+                for x: Int in 0 ..< blocks.x {
+                    let source: [Int16] = self.planes[plane].block(
+                        x: offset.x + x, y: offset.y + y
+                    )
+                    for z: Int in 0 ..< 64 {
+                        output.planes[plane][x: x, y: y, z: z] = source[z]
+                    }
+                }
+            }
+        }
+
+        return output
+    }
+}
