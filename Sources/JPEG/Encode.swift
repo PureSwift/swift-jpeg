@@ -3,7 +3,7 @@ extension JPEG {
     ///
     /// The write-side counterpart of ``Tables``, built from it once per scan
     /// rather than per block.
-    public struct Encoders: Sendable {
+    public struct Encoders {
         public var dc: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder]
         public var ac: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder]
 
@@ -11,6 +11,39 @@ extension JPEG {
         public init(_ tables: JPEG.Tables) {
             self.dc = tables.dc.mapValues { $0.encoder() }
             self.ac = tables.ac.mapValues { $0.encoder() }
+        }
+
+        private init(
+            dc: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder],
+            ac: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder]
+        ) {
+            self.dc = dc
+            self.ac = ac
+        }
+
+        /// Encoders that tally symbols instead of emitting them, one counter
+        /// per slot the given tables define.
+        ///
+        /// This is the first of the two passes an optimal table costs: walk the
+        /// image once to learn the symbol distribution, build tables from it,
+        /// then walk it again to write.
+        public static func counting(
+            like tables: JPEG.Tables
+        ) -> (encoders: Self, dc: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder.Counter],
+              ac: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder.Counter])
+        {
+            let dc: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder.Counter] =
+                tables.dc.mapValues { _ in .init() }
+            let ac: [JPEG.Table.Huffman.Key: JPEG.Table.Huffman.Encoder.Counter] =
+                tables.ac.mapValues { _ in .init() }
+            return (
+                encoders: .init(
+                    dc: dc.mapValues { .counting(into: $0) },
+                    ac: ac.mapValues { .counting(into: $0) }
+                ),
+                dc: dc,
+                ac: ac
+            )
         }
     }
 }
@@ -38,7 +71,13 @@ extension JPEG.Data.Spectral {
         encoders: JPEG.Encoders,
         restartInterval: Int
     ) throws -> [UInt8] {
-        guard case .baseline = self.layout.process else {
+        // Baseline and extended sequential code identically; they differ only
+        // in the sample precision they permit and in which SOF marker names
+        // them. Progressive and lossless are genuinely different procedures.
+        switch self.layout.process {
+        case .baseline, .extended(coding: .huffman, differential: false):
+            break
+        default:
             throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
         }
 
@@ -135,7 +174,7 @@ extension JPEG.Data.Spectral {
         guard amplitude.category <= 15 else {
             throw JPEG.EncodingError.coefficientOutOfRange(difference)
         }
-        component.dc.encode(.init(truncatingIfNeeded: amplitude.category), to: &bits)
+        try component.dc.encode(.init(truncatingIfNeeded: amplitude.category), to: &bits)
         bits.write(amplitude.bits, count: amplitude.category)
 
         // AC coefficients go out as run-length and magnitude pairs along the
@@ -151,7 +190,7 @@ extension JPEG.Data.Spectral {
             }
 
             while run >= 16 {
-                component.ac.encode(0xF0, to: &bits)
+                try component.ac.encode(0xF0, to: &bits)
                 run -= 16
             }
 
@@ -160,7 +199,7 @@ extension JPEG.Data.Spectral {
             guard amplitude.category <= 15 else {
                 throw JPEG.EncodingError.coefficientOutOfRange(value)
             }
-            component.ac.encode(
+            try component.ac.encode(
                 .init(truncatingIfNeeded: run << 4 | amplitude.category),
                 to: &bits
             )
@@ -172,7 +211,7 @@ extension JPEG.Data.Spectral {
         // symbol says the rest of the block is zero. This is where most of the
         // compression in a high-frequency-poor block comes from.
         if run > 0 {
-            component.ac.encode(0x00, to: &bits)
+            try component.ac.encode(0x00, to: &bits)
         }
     }
 }
