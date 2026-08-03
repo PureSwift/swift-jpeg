@@ -49,6 +49,15 @@ final class Instance {
     var errorCode: Int32
     var errorMessage: [CChar]
 
+    /// The scaling factor decompression should apply, as a fraction.
+    ///
+    /// Stored rather than applied immediately because it takes effect at the
+    /// next decompression, and a caller may set it once and decode many images.
+    var scalingFactor: (numerator: Int, denominator: Int)
+
+    /// The region decompression should crop to, or `nil` for the whole image.
+    var croppingRegion: (x: Int, y: Int, width: Int, height: Int)?
+
     /// The buffer most recently returned to the caller, when this library
     /// allocated it.
     ///
@@ -62,6 +71,8 @@ final class Instance {
         self.initType = initType
         self.apiVersion = apiVersion
         self.parameters = [:]
+        self.scalingFactor = (numerator: 1, denominator: 1)
+        self.croppingRegion = nil
         self.errorCode = TJERR_WARNING.id
         self.errorMessage = Instance.terminated("No error")
         self.owned = []
@@ -105,6 +116,17 @@ final class Instance {
     /// Reads a parameter, falling back to the documented default.
     func parameter(_ param: TJPARAM, default fallback: Int32 = 0) -> Int32 {
         self.parameters[param.id] ?? fallback
+    }
+}
+
+/// An error raised inside the boundary rather than by the engine.
+enum Failure: Error, CustomStringConvertible {
+    case message(String)
+
+    var description: String {
+        switch self {
+        case .message(let text):    return text
+        }
     }
 }
 
