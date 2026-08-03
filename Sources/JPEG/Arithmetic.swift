@@ -201,17 +201,17 @@ extension JPEG.Arithmetic {
         /// Each entry is a class-and-slot byte followed by one value byte. For
         /// a DC table that value packs both bounds, four bits each; for an AC
         /// table it is the single index.
-        public static func parse(_ data: [UInt8]) throws -> [(
+        public static func parse(_ data: [UInt8]) throws(JPEG.Failure) -> [(
             class: JPEG.Table.Huffman.Class,
             target: JPEG.Table.Huffman.Key,
             conditioning: Conditioning
         )] {
             guard data.count % 2 == 0 else {
-                throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+                throw .parsing(.truncatedMarkerSegmentBody(
                     .arithmeticCodingCondition,
                     count: data.count,
                     expected: (data.count + 1) ... (data.count + 1)
-                )
+                ))
             }
 
             var entries: [(
@@ -225,11 +225,11 @@ extension JPEG.Arithmetic {
                 switch data[base] >> 4 {
                 case 0:     `class` = .dc
                 case 1:     `class` = .ac
-                default:    throw JPEG.ParsingError.invalidHuffmanTypeCode(data[base] >> 4)
+                default:    throw .parsing(.invalidHuffmanTypeCode(data[base] >> 4))
                 }
                 let slot: UInt8 = data[base] & 0x0F
                 guard slot < 4 else {
-                    throw JPEG.ParsingError.invalidHuffmanTargetCode(slot)
+                    throw .parsing(.invalidHuffmanTargetCode(slot))
                 }
 
                 let value: UInt8 = data[base + 1]
@@ -239,16 +239,16 @@ extension JPEG.Arithmetic {
                     let lower: Int = .init(value & 0x0F)
                     let upper: Int = .init(value >> 4)
                     guard lower <= upper else {
-                        throw JPEG.ParsingError.invalidArithmeticConditioning(
+                        throw .parsing(.invalidArithmeticConditioning(
                             lower: lower, upper: upper
-                        )
+                        ))
                     }
                     conditioning = .init(lower: lower, upper: upper)
                 case .ac:
                     guard 1 ... 63 ~= Int(value) else {
-                        throw JPEG.ParsingError.invalidArithmeticConditioning(
+                        throw .parsing(.invalidArithmeticConditioning(
                             lower: .init(value), upper: .init(value)
-                        )
+                        ))
                     }
                     conditioning = .init(kx: .init(value))
                 }
