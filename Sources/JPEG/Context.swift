@@ -158,7 +158,25 @@ extension JPEG.Data.Spectral {
     }
 }
 
+extension JPEG.Data.Spectral {
+    /// Decodes an image from a buffer.
+    ///
+    /// Preferred over the `inout` form for an in-memory image: it reads through
+    /// a cursor, which is linear in the length of the stream rather than
+    /// quadratic.
+    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+        var stream: JPEG.Bytestream.Cursor = .init(bytes)
+        return try self.decompress(stream: &stream)
+    }
+}
+
 extension JPEG.Data.Planar {
+    /// Decodes an image from a buffer.
+    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+        var stream: JPEG.Bytestream.Cursor = .init(bytes)
+        return try self.decompress(stream: &stream)
+    }
+
     /// Decodes an image and transforms it to samples.
     public static func decompress<Source>(
         stream: inout Source
@@ -168,6 +186,12 @@ extension JPEG.Data.Planar {
 }
 
 extension JPEG.Data.Rectangular {
+    /// Decodes an image from a buffer.
+    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+        var stream: JPEG.Bytestream.Cursor = .init(bytes)
+        return try self.decompress(stream: &stream)
+    }
+
     /// Decodes an image all the way to interleaved full-resolution samples.
     public static func decompress<Source>(
         stream: inout Source
