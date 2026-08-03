@@ -313,7 +313,7 @@ extension JPEG.RGB: JPEG.Color {
         case .y, .nonconforming:
             // One meaningful component. Rare, and the general path already
             // handles the component-count bookkeeping.
-            return JPEG.YCbCr.unpack(interleaved, of: format).map(\.rgb)
+            return JPEG.YCbCr.unpack(interleaved, of: format).map { $0.rgb }
         }
     }
 
