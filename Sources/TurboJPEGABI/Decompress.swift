@@ -38,6 +38,8 @@ extension Instance {
             : TJCS_YCbCr.rawValue
         self.parameters[TJPARAM_PROGRESSIVE.id] = image.layout.process.isProgressive ? 1 : 0
         self.parameters[TJPARAM_LOSSLESS.id] = 0
+        self.parameters[TJPARAM_ARITHMETIC.id] =
+            spectral.layout.process.coding == .arithmetic ? 1 : 0
 
         // The reported dimensions are the JPEG's own, not the scaled output's:
         // a caller computes the latter with TJSCALED. Recorded before cropping
@@ -94,6 +96,8 @@ extension Instance {
         self.parameters[TJPARAM_PROGRESSIVE.id] =
             spectral.layout.process.isProgressive ? 1 : 0
         self.parameters[TJPARAM_LOSSLESS.id] = 0
+        self.parameters[TJPARAM_ARITHMETIC.id] =
+            spectral.layout.process.coding == .arithmetic ? 1 : 0
 
         return spectral.decomposed()
     }
