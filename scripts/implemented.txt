@@ -94,3 +94,17 @@ tj3Compress12
 tj3Decompress12
 tj3Compress16
 tj3Decompress16
+
+# Image file loading and saving.
+tj3LoadImage8
+tj3LoadImage12
+tj3LoadImage16
+tj3SaveImage8
+tj3SaveImage12
+tj3SaveImage16
+tjLoadImage
+tjSaveImage
+
+# ICC colour profiles.
+tj3SetICCProfile
+tj3GetICCProfile
