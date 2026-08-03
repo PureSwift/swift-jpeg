@@ -145,20 +145,35 @@ extension JPEG.Table.Quantization {
     ///     -   standard: Which base table to scale.
     ///     -   quality: A rating from 1 through 100.
     ///     -   target: The slot to define the table in.
+    ///     -   baseline: Whether the table must fit a baseline frame, which
+    ///         cannot carry 16-bit factors. Clamping to 255 costs quality at
+    ///         the very lowest settings and is required there; an extended
+    ///         sequential frame can carry the full range.
     public static func standard(
         _ standard: Standard,
         quality: Int,
-        target: Key
+        target: Key,
+        baseline: Bool = true
     ) -> Self {
         let scale: Int = Self.scaling(quality: quality)
+        let ceiling: Int = baseline ? 255 : 32767
+
+        var wide: Bool = false
         let factors: [UInt16] = Self.base(standard).map {
-            // Rounded, then clamped into 1 ... 255. A factor of zero would be a
-            // divide by zero on the way back, and a baseline frame cannot carry
-            // 16-bit factors at all.
+            // A factor of zero would be a divide by zero on the way back, so
+            // the floor is 1 rather than 0.
             let scaled: Int = (.init($0) * scale + 50) / 100
-            return .init(Swift.min(Swift.max(scaled, 1), 255))
+            let clamped: Int = Swift.min(Swift.max(scaled, 1), ceiling)
+            if clamped > 255 {
+                wide = true
+            }
+            return .init(clamped)
         }
-        return .init(factors: factors, target: target, precision: .uint8)
+        return .init(
+            factors: factors,
+            target: target,
+            precision: wide ? .uint16 : .uint8
+        )
     }
 }
 
