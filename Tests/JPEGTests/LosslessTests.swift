@@ -154,8 +154,11 @@ struct LosslessTests {
         let components: Int = .init(encoded[body])
         encoded[body + 1 + 2 * components] = 0
 
-        #expect(throws: JPEG.ParsingError.self) {
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
             _ = try JPEG.Data.Lossless<JPEG.Common>.decompress(encoded)
         }
+        // The stage is the useful part of the assertion: it says the failure
+        // was found where it should have been.
+        #expect(failure?.stage == JPEG.ParsingError.namespace)
     }
 }
