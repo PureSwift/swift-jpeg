@@ -180,15 +180,16 @@ extension JPEG.Data.Lossless {
         scan: JPEG.Header.Scan,
         tables: JPEG.Tables,
         restartInterval: Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         guard let selected: JPEG.Predictor = .init(rawValue: scan.band.lowerBound) else {
-            throw JPEG.ParsingError.invalidPredictor(scan.band.lowerBound)
+            throw .parsing(.invalidPredictor(scan.band.lowerBound))
         }
 
         let planes: [Int] = try self.layout.validate(scan: scan)
         let decoders: [JPEG.Table.Huffman] = try scan.components.map {
-            guard let table: JPEG.Table.Huffman = tables.dc[$0.dc] else {
-                throw JPEG.DecodingError.undefinedScanHuffmanTableReference($0.dc)
+            (component) throws(JPEG.Failure) -> JPEG.Table.Huffman in
+            guard let table: JPEG.Table.Huffman = tables.dc[component.dc] else {
+                throw .decoding(.undefinedScanHuffmanTableReference(component.dc))
             }
             return table
         }
@@ -240,7 +241,7 @@ extension JPEG.Data.Lossless {
                                 try decoders[index].symbol(from: &bits)
                             )
                             guard category <= 16 else {
-                                throw JPEG.DecodingError.invalidEntropyCodedSymbol
+                                throw .decoding(.invalidEntropyCodedSymbol)
                             }
                             let difference: Int32 = bits.difference(category: category)
 
@@ -269,9 +270,9 @@ extension JPEG.Data.Lossless {
         }
 
         guard decoded == total else {
-            throw JPEG.DecodingError.truncatedEntropyCodedSegment(
+            throw .decoding(.truncatedEntropyCodedSegment(
                 decoded: decoded, expected: total
-            )
+            ))
         }
     }
 }
@@ -287,15 +288,16 @@ extension JPEG.Data.Lossless {
         scan: JPEG.Header.Scan,
         encoders: JPEG.Encoders,
         restartInterval: Int
-    ) throws -> [UInt8] {
+    ) throws(JPEG.Failure) -> [UInt8] {
         guard let selected: JPEG.Predictor = .init(rawValue: scan.band.lowerBound) else {
-            throw JPEG.ParsingError.invalidPredictor(scan.band.lowerBound)
+            throw .parsing(.invalidPredictor(scan.band.lowerBound))
         }
 
         let planes: [Int] = try self.layout.validate(scan: scan)
         let tables: [JPEG.Table.Huffman.Encoder] = try scan.components.map {
-            guard let table: JPEG.Table.Huffman.Encoder = encoders.dc[$0.dc] else {
-                throw JPEG.EncodingError.undefinedHuffmanTable($0.dc, .dc)
+            (component) throws(JPEG.Failure) -> JPEG.Table.Huffman.Encoder in
+            guard let table: JPEG.Table.Huffman.Encoder = encoders.dc[component.dc] else {
+                throw .encoding(.undefinedHuffmanTable(component.dc, .dc))
             }
             return table
         }
@@ -380,7 +382,7 @@ extension JPEG.Data.Lossless {
     /// The Annex K tables describe DCT statistics and are a poor fit for
     /// prediction residuals, which cluster far more tightly around zero, so a
     /// lossless image always builds its own.
-    func tables(for scan: JPEG.Header.Scan, restartInterval: Int) throws -> JPEG.Tables {
+    func tables(for scan: JPEG.Header.Scan, restartInterval: Int) throws(JPEG.Failure) -> JPEG.Tables {
         var seed: JPEG.Tables = .init()
         for component: JPEG.ScanComponent in scan.components {
             seed.push(
@@ -412,7 +414,7 @@ extension JPEG.Data.Lossless {
     /// process check through every step of the other would obscure both.
     public static func decompress<Source>(
         stream: inout Source
-    ) throws -> Self where Source: JPEG.Bytestream.Source {
+    ) throws(JPEG.Failure) -> Self where Source: JPEG.Bytestream.Source {
         try stream.start()
 
         var tables: JPEG.Tables = .init()
@@ -437,10 +439,10 @@ extension JPEG.Data.Lossless {
 
             case .frame(let process):
                 guard case .lossless = process else {
-                    throw JPEG.DecodingError.unsupportedProcess(process)
+                    throw .decoding(.unsupportedProcess(process))
                 }
                 guard image == nil else {
-                    throw JPEG.DecodingError.duplicateFrameHeader
+                    throw .decoding(.duplicateFrameHeader)
                 }
                 let frame: JPEG.Header.Frame = try .parse(data, process: process)
                 image = .init(layout: try .init(frame: frame))
@@ -455,7 +457,7 @@ extension JPEG.Data.Lossless {
 
             case .scan:
                 guard var decoding: Self = image else {
-                    throw JPEG.DecodingError.missingFrameHeader
+                    throw .decoding(.missingFrameHeader)
                 }
                 let scan: JPEG.Header.Scan = try .parse(
                     data, process: decoding.layout.process
@@ -474,13 +476,13 @@ extension JPEG.Data.Lossless {
         }
 
         guard let image: Self = image else {
-            throw JPEG.DecodingError.missingFrameHeader
+            throw .decoding(.missingFrameHeader)
         }
         return image
     }
 
     /// Decodes a lossless image from a buffer.
-    public static func decompress(_ bytes: [UInt8]) throws -> Self {
+    public static func decompress(_ bytes: [UInt8]) throws(JPEG.Failure) -> Self {
         var stream: JPEG.Bytestream.Cursor = .init(bytes)
         return try self.decompress(stream: &stream)
     }
@@ -488,11 +490,11 @@ extension JPEG.Data.Lossless {
 
 extension JPEG.Data.Lossless {
     /// The frame header describing this image.
-    func frame() throws -> JPEG.Header.Frame {
+    func frame() throws(JPEG.Failure) -> JPEG.Header.Frame {
         guard 1 ... 65535 ~= self.layout.width, 1 ... 65535 ~= self.layout.height else {
-            throw JPEG.EncodingError.imageTooLarge(
+            throw .encoding(.imageTooLarge(
                 width: self.layout.width, height: self.layout.height
-            )
+            ))
         }
         var components: [JPEG.Component.Key: JPEG.Component] = [:]
         for (plane, key): (Int, JPEG.Component.Key) in self.layout.keys.enumerated() {
@@ -524,9 +526,9 @@ extension JPEG.Data.Lossless {
         transform: Int = 0,
         restartInterval: Int = 0,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
-    ) throws where Destination: JPEG.Bytestream.Destination {
+    ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         guard 0 ..< self.layout.format.precision ~= transform else {
-            throw JPEG.EncodingError.unsupportedPrecision(self.layout.format.precision)
+            throw .encoding(.unsupportedPrecision(self.layout.format.precision))
         }
 
         let scan: JPEG.Header.Scan = .init(
@@ -569,7 +571,7 @@ extension JPEG.Data.Lossless {
             scan: scan, encoders: .init(tables), restartInterval: restartInterval
         )
         guard stream.write(ecs) != nil else {
-            throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
+            throw .encoding(.unsupportedProcess(self.layout.process))
         }
         try stream.format(marker: .end)
     }
