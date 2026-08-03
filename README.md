@@ -141,6 +141,32 @@ One wrinkle worth knowing if you read the header: from libjpeg-turbo 3.2,
 TURBOJPEG_VERSION_NUMBER)`. Modern clients therefore never call `tj3Init` by
 name, but older binaries did bind to that symbol, so both are implemented.
 
+## Performance
+
+Honest numbers, measured on a 1024×1024 4:2:0 image against the system
+libjpeg-turbo on the same machine:
+
+| | decode | |
+| --- | --- | --- |
+| libjpeg-turbo | 0.013 s | 80 Mpixel/s |
+| swift-jpeg | 0.258 s | 4.1 Mpixel/s |
+
+So roughly **20× slower than the reference**, down from 310× before any
+optimization work. What that work removed was structural rather than clever: a
+lexer that consumed from the front of an array and so cost time quadratic in the
+file size, a heap allocation per byte of entropy coded data, four allocations
+per 8×8 block, and bounds-checked subscripting in the per-pixel loops.
+
+The remaining gap is not structural. libjpeg-turbo hand-writes SIMD assembly for
+the inverse transform, the colour conversion and the upsampler, and uses a fast
+DCT with about a fifth of the multiplies of the direct form used here. Closing it
+means writing those, not tidying what exists.
+
+Nothing here is tuned beyond that. Every optimization above was made because a
+measurement pointed at it, and the ones that were merely suspected — the Huffman
+decoder walks bits one at a time with no lookup table — are still untouched
+because they did not turn out to be where the time went.
+
 ## Testing
 
 ```sh
