@@ -10,52 +10,12 @@
 
 #include "turbojpeg.h"
 
-unsigned long TJBUFSIZE(int width, int height)
-{
-  return 0;
-}
-
-int tjCompress(tjhandle handle, unsigned char *srcBuf, int width, int pitch, int height, int pixelSize, unsigned char *dstBuf, unsigned long *compressedSize, int jpegSubsamp, int jpegQual, int flags)
-{
-  return -1;
-}
-
-int tjDecompress(tjhandle handle, unsigned char *jpegBuf, unsigned long jpegSize, unsigned char *dstBuf, int width, int pitch, int height, int pixelSize, int flags)
-{
-  return -1;
-}
-
-unsigned long TJBUFSIZEYUV(int width, int height, int jpegSubsamp)
-{
-  return 0;
-}
-
 unsigned char *tjLoadImage(const char *filename, int *width, int align, int *height, int *pixelFormat, int flags)
 {
   return NULL;
 }
 
 int tjSaveImage(const char *filename, unsigned char *buffer, int width, int pitch, int height, int pixelFormat, int flags)
-{
-  return -1;
-}
-
-int tj3Compress12(tjhandle handle, const short *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char **jpegBuf, size_t *jpegSize)
-{
-  return -1;
-}
-
-int tj3Compress16(tjhandle handle, const unsigned short *srcBuf, int width, int pitch, int height, int pixelFormat, unsigned char **jpegBuf, size_t *jpegSize)
-{
-  return -1;
-}
-
-int tj3Decompress12(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, short *dstBuf, int pitch, int pixelFormat)
-{
-  return -1;
-}
-
-int tj3Decompress16(tjhandle handle, const unsigned char *jpegBuf, size_t jpegSize, unsigned short *dstBuf, int pitch, int pixelFormat)
 {
   return -1;
 }
@@ -86,16 +46,6 @@ int tj3SaveImage16(tjhandle handle, const char *filename, const unsigned short *
 }
 
 int tj3SaveImage8(tjhandle handle, const char *filename, const unsigned char *buffer, int width, int pitch, int height, int pixelFormat)
-{
-  return -1;
-}
-
-int tj3SetCroppingRegion(tjhandle handle, tjregion croppingRegion)
-{
-  return -1;
-}
-
-int tj3SetScalingFactor(tjhandle handle, tjscalingfactor scalingFactor)
 {
   return -1;
 }
