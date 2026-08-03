@@ -58,9 +58,6 @@ public func tj3Compress8(
         return instance.fail("pitch \(pitch) is smaller than one row")
     }
 
-    if instance.parameter(TJPARAM_LOSSLESS) != 0 {
-        return instance.fail("lossless compression is not implemented")
-    }
     if instance.parameter(TJPARAM_ARITHMETIC) != 0 {
         return instance.fail("arithmetic coding is not implemented")
     }
@@ -74,6 +71,9 @@ public func tj3Compress8(
     // Grayscale output from color input is legitimate and common — it is how a
     // caller asks us to throw the chroma away.
     let gray: Bool = sampling.isGray || format.isGray
+    // Lossless keeps the caller's channels exactly as given; any colour
+    // transform would cost the exactness it exists to provide.
+    let lossless: Bool = instance.parameter(TJPARAM_LOSSLESS) != 0
 
     do {
         let layout: JPEG.Layout<JPEG.Common> = try .init(
@@ -99,15 +99,22 @@ public func tj3Compress8(
             let row: UnsafePointer<UInt8> = srcBuf + y * stride
             for x: Int in 0 ..< Int(width) {
                 let pixel: UnsafePointer<UInt8> = row + x * format.size
-                let color: JPEG.YCbCr = format.isGray
-                    ? .init(y: pixel[0])
-                    : .init(
+                let base: Int = (y * .init(width) + x) * planes
+                if gray {
+                    values[base] = format.isGray
+                        ? .init(pixel[0])
+                        : .init(JPEG.YCbCr(
+                            .init(pixel[format.red], pixel[format.green], pixel[format.blue])
+                        ).y)
+                } else if lossless {
+                    values[base] = .init(pixel[format.red])
+                    values[base + 1] = .init(pixel[format.green])
+                    values[base + 2] = .init(pixel[format.blue])
+                } else {
+                    let color: JPEG.YCbCr = .init(
                         .init(pixel[format.red], pixel[format.green], pixel[format.blue])
                     )
-
-                let base: Int = (y * .init(width) + x) * planes
-                values[base] = .init(color.y)
-                if !gray {
+                    values[base] = .init(color.y)
                     values[base + 1] = .init(color.cb)
                     values[base + 2] = .init(color.cr)
                 }
@@ -124,6 +131,12 @@ public func tj3Compress8(
         let restartInterval: Int = rows > 0 ? .init(rows) * mcus.x : .init(blocks)
 
         var encoded: [UInt8] = []
+        if instance.parameter(TJPARAM_LOSSLESS) != 0 {
+            encoded = try instance.compressLossless(
+                values: values, width: .init(width), height: .init(height),
+                precision: 8, gray: gray
+            )
+        } else {
         try image.compress(
             stream: &encoded,
             quality: .init(quality),
@@ -131,6 +144,7 @@ public func tj3Compress8(
             progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0,
             metadata: instance.iccProfile.map(ICCProfile.segments(of:)) ?? []
         )
+        }
 
         // With NOREALLOC the caller owns the buffer and it must not be
         // replaced; without it we allocate one they will free with tj3Free.
