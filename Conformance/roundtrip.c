@@ -117,10 +117,15 @@ int main(void)
 
     printf("unimplemented entry points\n");
     /* These are published but stubbed. They must fail through the API's own
-     * convention rather than crash or return something plausible. */
+     * convention rather than crash or return something plausible.
+     *
+     * Which symbols belong here changes as the library grows — tjInitCompress
+     * was checked here until it was implemented, and this list shrinking is the
+     * point rather than a maintenance burden. */
     check(tj3Transform(decompressor, jpeg, jpegSize, 0, NULL, NULL, NULL) == -1,
           "tj3Transform reports failure");
-    check(tjInitCompress() == NULL, "the deprecated tjInitCompress returns NULL");
+    check(tjBufSizeYUV(width, height, TJSAMP_420) == 0,
+          "the unimplemented tjBufSizeYUV returns 0");
 
     tj3Free(jpeg);
     tj3Destroy(compressor);
