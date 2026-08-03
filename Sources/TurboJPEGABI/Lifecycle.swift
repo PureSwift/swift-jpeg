@@ -32,19 +32,26 @@ private func valid(initType: Int32) -> Bool {
     TJINIT_COMPRESS.id ... TJINIT_TRANSFORM.id ~= initType
 }
 
-/// The API version this library implements, matching the vendored header's
-/// `TURBOJPEG_VERSION_NUMBER`.
-private let apiVersion: Int32 = 3002000
+/// The API version a client that predates versioned initialization is treated
+/// as having.
+///
+/// `tj3InitVersion` arrived in 3.2, so anything reaching the unversioned entry
+/// point was compiled against something older. 3.0 is the earliest version that
+/// had the TJ3 API at all.
+private let legacyAPIVersion: Int32 = 3000000
 
 @c @implementation
 public func tj3InitVersion(_ initType: Int32, _ apiVersion: Int32) -> tjhandle! {
-    // A client compiled against a newer header may call functions this library
-    // does not have, so refusing here turns a would-be missing-symbol crash
-    // into the documented NULL return.
-    guard valid(initType: initType), apiVersion <= TurboJPEGABI.apiVersion else {
+    // The bounds are the reference implementation's, and the upper one is
+    // deliberately far beyond any real version. A client compiled against a
+    // *newer* header is not rejected — it is accepted and then given the
+    // feature set its own headers described, which is the opposite of what an
+    // "is this version too new for us" check would do. Refusing would break a
+    // caller that never touches the newer features.
+    guard valid(initType: initType), 1000000 ... 999999999 ~= apiVersion else {
         return nil
     }
-    return Instance(initType: initType).handle()
+    return Instance(initType: initType, apiVersion: apiVersion).handle()
 }
 
 /// The pre-3.2 entry point.
@@ -63,7 +70,7 @@ public func tj3InitLegacy(_ initType: Int32) -> tjhandle! {
     guard valid(initType: initType) else {
         return nil
     }
-    return Instance(initType: initType).handle()
+    return Instance(initType: initType, apiVersion: legacyAPIVersion).handle()
 }
 
 @c @implementation
@@ -123,6 +130,14 @@ public func tj3Set(_ handle: tjhandle?, _ param: Int32, _ value: Int32) -> Int32
     case TJPARAM_SUBSAMP.id:
         guard Subsampling(value) != nil else {
             return instance.fail("unsupported subsampling \(value)")
+        }
+        // TJSAMP_410 and TJSAMP_24 arrived in 3.2. A client compiled before
+        // that has shorter tjMCUWidth and tjMCUHeight arrays, so letting it
+        // select one would make it index past the end of its own tables.
+        guard value < instance.subsamplingLimit else {
+            return instance.fail(
+                "subsampling \(value) requires API version 3.2 or later"
+            )
         }
     case TJPARAM_PRECISION.id,
          TJPARAM_JPEGWIDTH.id,
