@@ -151,7 +151,7 @@ extension JPEG.Bitstream {
     /// -   Returns:
     ///     One byte range per interval, in stream order. Always at least one
     ///     element, even when the data is empty.
-    public static func intervals(of data: [UInt8], restartInterval: Int) throws -> [[UInt8]] {
+    public static func intervals(of data: [UInt8], restartInterval: Int) throws(JPEG.Failure) -> [[UInt8]] {
         guard restartInterval > 0 else {
             return [data]
         }
@@ -169,7 +169,7 @@ extension JPEG.Bitstream {
 
             let found: Int = .init(data[i + 1] - 0xD0)
             guard found == phase else {
-                throw JPEG.DecodingError.invalidRestartPhase(found, expected: phase)
+                throw .decoding(.invalidRestartPhase(found, expected: phase))
             }
 
             intervals.append(.init(data[start ..< i]))
