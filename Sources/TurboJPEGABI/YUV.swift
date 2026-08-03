@@ -355,10 +355,6 @@ public func tj3CompressFromYUVPlanes8(
         return instance.fail("source planes must not be NULL")
     }
 
-    if instance.parameter(TJPARAM_PROGRESSIVE) != 0 {
-        return instance.fail("progressive compression is not implemented")
-    }
-
     do {
         // No color conversion and no subsampling: the caller has already done
         // both, which is the entire reason to enter here rather than through
@@ -369,7 +365,8 @@ public func tj3CompressFromYUVPlanes8(
         var encoded: [UInt8] = []
         try planar.compress(
             stream: &encoded,
-            quality: .init(instance.parameter(TJPARAM_QUALITY, default: 95))
+            quality: .init(instance.parameter(TJPARAM_QUALITY, default: 95)),
+            progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0
         )
 
         if instance.parameter(TJPARAM_NOREALLOC) != 0, let destination = jpegBuf.pointee {
