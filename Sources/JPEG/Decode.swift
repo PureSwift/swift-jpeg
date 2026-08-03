@@ -52,9 +52,6 @@ extension JPEG.Data.Spectral {
         restartInterval: Int
     ) throws {
         let process: JPEG.Process = self.layout.process
-        guard case .huffman = process.coding else {
-            throw JPEG.DecodingError.unsupportedProcess(process)
-        }
 
         let kind: JPEG.Header.Scan.Kind = scan.kind(process: process)
         let planes: [Int] = try self.layout.validate(scan: scan)
