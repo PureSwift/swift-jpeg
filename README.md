@@ -210,12 +210,19 @@ engine's discipline to the import.
 | decode, end to end | 0.0446 s | 0.0395 s |
 | encode, end to end | 0.0625 s | 0.0572 s |
 
-The kernels are about 1.75× on the transforms themselves, which is 8–11% end to
-end because the transforms are a quarter of the pipeline. They are bit-exact
-against the portable ones over 8192 blocks in both directions — exact, not
-within a count, because both run the same factorization with the same constants,
-so any disagreement at all would mean a lane is being computed differently
-rather than rounded differently.
+The transform *kernels* are about 5× — 16384 blocks streamed through memory go
+from 0.0041 s to 0.0008 s. The phases above move by less than that, and the gap
+is the point: the phase called "inverse transform" also dequantizes, gathers
+each block and writes the samples back out, and none of that is vectorized. The
+transform is about half of it, which is why halving the transform four times
+over moves the phase by 1.75×. End to end it is 8–11%, because the transforms
+are a quarter of the pipeline.
+
+The kernels are bit-exact against the portable ones — over 8192 blocks in both
+directions on x86-64, and 2048 on AArch64. Exact, not within a count: both run
+the same factorization with the same constants, so any disagreement at all
+would mean a lane is being computed differently rather than rounded
+differently.
 
 They are written as C intrinsics with a function-level `target` attribute rather
 than as assembly or a separately-flagged compilation unit. The attribute is what
@@ -226,6 +233,10 @@ flags, which in SwiftPM means `unsafeFlags`, which would stop the package being
 usable as a dependency at all. The `xgetbv` check alongside `cpuid` is not
 pedantry: a processor can report AVX2 while the operating system does not
 preserve the wide registers across a context switch.
+
+There are two vector implementations, AVX2 and NEON, selected by `cpuid` and by
+the target architecture respectively. NEON needs no detection: it is mandatory
+on AArch64.
 
 Still scalar: the upsampler, the colour conversion and the subsampler. The
 entropy coders do not vectorize — they are inherently serial.
