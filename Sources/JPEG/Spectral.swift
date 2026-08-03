@@ -88,6 +88,19 @@ extension JPEG.Data.Spectral.Plane {
         }
     }
 
+    /// Runs `body` on the 64 coefficients of the block at `(x, y)`, in place.
+    ///
+    /// Avoids the copy ``block(x:y:)`` makes, which matters because decoding
+    /// touches every block of every plane exactly once.
+    func withBlock<T>(
+        x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) -> T
+    ) -> T {
+        let base: Int = ((y * self.blocks.x) + x) * 64
+        return self.buffer.withUnsafeBufferPointer {
+            body(.init(rebasing: $0[base ..< base + 64]))
+        }
+    }
+
     /// Copies the block at `(x, y)` out as 64 row-major coefficients.
     public func block(x: Int, y: Int) -> [Int16] {
         guard 0 ..< self.blocks.x ~= x, 0 ..< self.blocks.y ~= y else {
