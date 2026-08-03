@@ -12,6 +12,10 @@ let package = Package(
             name: "JPEGAccelerate",
             targets: ["JPEGAccelerate"]
         ),
+        .executable(
+            name: "jpeg-benchmark",
+            targets: ["JPEGBenchmark"]
+        ),
         .library(
             name: "TurboJPEGABI",
             type: .dynamic,
@@ -53,6 +57,13 @@ let package = Package(
         .target(
             name: "JPEGAccelerate",
             dependencies: ["JPEG", "CJPEGAccel", "CCPUFeatures"]
+        ),
+
+        // The benchmark. Imports Foundation freely — the no-imports rule
+        // applies to the engine, not to what measures it.
+        .executableTarget(
+            name: "JPEGBenchmark",
+            dependencies: ["JPEG", "JPEGAccelerate"]
         ),
 
         // The C ABI boundary. Depends on the engine; the engine knows nothing
