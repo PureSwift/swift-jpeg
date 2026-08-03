@@ -12,7 +12,10 @@ extension Instance {
         _ jpegBuf: UnsafePointer<UInt8>,
         _ jpegSize: Int
     ) throws -> JPEG.Data.Rectangular<JPEG.Common> {
-        var stream: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
+        let bytes: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
+        self.decodedProfile = try? ICCProfile.profile(in: bytes)
+
+        var stream: [UInt8] = bytes
         let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
 
         // The scaling factor is applied by transforming fewer coefficients per
