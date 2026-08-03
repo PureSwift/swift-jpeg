@@ -9,7 +9,12 @@ extension JPEG {
         /// The color format.
         public let format: Format
         /// The coding process.
-        public let process: JPEG.Process
+        /// The coding process.
+        ///
+        /// Settable within the module so an image can be re-coded under a
+        /// different process without rebuilding it; see
+        /// ``JPEG/Data/Spectral/reprocessed(as:)``.
+        public internal(set) var process: JPEG.Process
         /// The image width, in samples.
         public internal(set) var width: Int
         /// The image height, in samples.
