@@ -19,12 +19,20 @@ set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
 build="${1:-$root/.build/conformance}"
 
+# Honour CC. Some environments that have a Swift toolchain — the official
+# container images among them — ship clang without a `cc` alias, and the
+# conformance programs are the one part of this that must be built by a C
+# compiler rather than by SwiftPM.
+cc="${CC:-cc}"
+command -v "$cc" >/dev/null || cc=clang
+command -v "$cc" >/dev/null || { echo "no C compiler found; set CC" >&2; exit 1; }
+
 cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build"
 
 status=0
 for program in roundtrip legacy yuv transform extras; do
-    cc -std=c99 -Wall -Wextra \
+    "$cc" -std=c99 -Wall -Wextra \
         -I "$root/Sources/CTurboJPEG/include" \
         -o "$build/$program" "$root/Conformance/$program.c" \
         -L "$build" -lturbojpeg
