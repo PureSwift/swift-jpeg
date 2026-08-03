@@ -175,28 +175,39 @@ name, but older binaries did bind to that symbol, so both are implemented.
 ## Performance
 
 Honest numbers, measured on a 1024×1024 4:2:0 image against the system
-libjpeg-turbo on the same machine:
+libjpeg-turbo on the same machine, through the C ABI in both cases:
 
-| | decode | |
-| --- | --- | --- |
-| libjpeg-turbo | 0.013 s | 80 Mpixel/s |
-| swift-jpeg | 0.258 s | 4.1 Mpixel/s |
+| | decode | | encode | |
+| --- | --- | --- | --- | --- |
+| libjpeg-turbo | 0.0052 s | 201 Mpixel/s | 0.0045 s | 236 Mpixel/s |
+| swift-jpeg | 0.045 s | 23 Mpixel/s | 0.064 s | 16 Mpixel/s |
 
-So roughly **20× slower than the reference**, down from 310× before any
-optimization work. What that work removed was structural rather than clever: a
-lexer that consumed from the front of an array and so cost time quadratic in the
-file size, a heap allocation per byte of entropy coded data, four allocations
-per 8×8 block, and bounds-checked subscripting in the per-pixel loops.
+So roughly **9× slower on decode and 14× on encode**, from 310× before any
+optimization work.
 
-The remaining gap is not structural. libjpeg-turbo hand-writes SIMD assembly for
-the inverse transform, the colour conversion and the upsampler, and uses a fast
-DCT with about a fifth of the multiplies of the direct form used here. Closing it
-means writing those, not tidying what exists.
+Two kinds of thing produced that. The first was structural: a lexer that consumed
+from the front of an array and so cost time quadratic in the file size, a heap
+allocation per byte of entropy coded data, four allocations per 8×8 block, and
+bounds-checked subscripting in the per-pixel loops. The second was algorithmic —
+a Huffman decode table that resolves any code of eight bits or fewer in one step,
+the factored inverse and forward transforms, which need 11 multiplies per
+8-point transform where writing the definition out costs 64, and a subsampler
+that no longer performs two integer divisions per output sample to discover that
+it is averaging a single one.
 
-Nothing here is tuned beyond that. Every optimization above was made because a
-measurement pointed at it, and the ones that were merely suspected — the Huffman
-decoder walks bits one at a time with no lookup table — are still untouched
-because they did not turn out to be where the time went.
+The remaining gap is mostly SIMD. libjpeg-turbo hand-writes assembly for the
+transforms, the colour conversion and the upsampler; the code here is scalar.
+Closing it means writing those, not tidying what exists.
+
+Everything above was done because a measurement pointed at it. Several things
+that looked like they should help did not, and were reverted rather than kept:
+padding the bitstream so the bit reader could gather its window without a bounds
+test, acquiring each coefficient block once so the entropy decoder's writes
+skipped the copy-on-write check, and hoisting the Huffman tables out of the
+per-block call. Each was a plausible story about where the time went, and each
+measured flat. What is left in the profile is the entropy decoder, which is
+memory-bound writing coefficient planes out, and it does not get faster by
+being written more carefully.
 
 ## Testing
 
