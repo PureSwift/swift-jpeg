@@ -69,9 +69,9 @@ extension JPEG.Bytestream.Destination {
     /// The length field counts its own two bytes, which is the detail that
     /// makes an off-by-two here look like a corrupt file several segments
     /// later.
-    public mutating func format(marker: JPEG.Marker, body: [UInt8] = []) throws {
+    public mutating func format(marker: JPEG.Marker, body: [UInt8] = []) throws(JPEG.Failure) {
         guard self.write([0xFF, marker.code]) != nil else {
-            throw JPEG.EncodingError.unsupportedProcess(.baseline)
+            throw .encoding(.unsupportedProcess(.baseline))
         }
         guard marker.hasPayload else {
             return
@@ -79,14 +79,14 @@ extension JPEG.Bytestream.Destination {
 
         let length: Int = body.count + 2
         guard length <= 65535 else {
-            throw JPEG.EncodingError.imageTooLarge(width: length, height: 0)
+            throw .encoding(.imageTooLarge(width: length, height: 0))
         }
         guard
         self.write([.init(truncatingIfNeeded: length >> 8), .init(truncatingIfNeeded: length)])
             != nil,
         body.isEmpty || self.write(body) != nil
         else {
-            throw JPEG.EncodingError.unsupportedProcess(.baseline)
+            throw .encoding(.unsupportedProcess(.baseline))
         }
     }
 }
@@ -101,12 +101,12 @@ extension Array: JPEG.Bytestream.Destination where Element == UInt8 {
 
 extension JPEG.Data.Spectral {
     /// The frame header describing this image.
-    func frame() throws -> JPEG.Header.Frame {
+    func frame() throws(JPEG.Failure) -> JPEG.Header.Frame {
         guard 1 ... 65535 ~= self.layout.width, 1 ... 65535 ~= self.layout.height else {
-            throw JPEG.EncodingError.imageTooLarge(
+            throw .encoding(.imageTooLarge(
                 width: self.layout.width,
                 height: self.layout.height
-            )
+            ))
         }
 
         var components: [JPEG.Component.Key: JPEG.Component] = [:]
@@ -142,7 +142,7 @@ extension JPEG.Data.Spectral {
         given tables: JPEG.Tables,
         scan: JPEG.Header.Scan,
         restartInterval: Int
-    ) throws -> (tables: JPEG.Tables, ecs: [UInt8]) {
+    ) throws(JPEG.Failure) -> (tables: JPEG.Tables, ecs: [UInt8]) {
         do {
             return (
                 tables,
@@ -150,7 +150,7 @@ extension JPEG.Data.Spectral {
                     scan: scan, encoders: .init(tables), restartInterval: restartInterval
                 )
             )
-        } catch JPEG.EncodingError.unencodableSymbol {
+        } catch JPEG.Failure.encoding(.unencodableSymbol) {
             // Fall through and build tables that cover whatever this image
             // actually produces.
         }
@@ -216,7 +216,7 @@ extension JPEG.Data.Spectral {
         tables: JPEG.Tables,
         restartInterval: Int = 0,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
-    ) throws where Destination: JPEG.Bytestream.Destination {
+    ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         let frame: JPEG.Header.Frame = try self.frame()
         let scan: JPEG.Header.Scan = self.scan()
         // Neither a progressive image nor an arithmetic one is coded by the
@@ -271,7 +271,7 @@ extension JPEG.Data.Spectral {
                 arithmetic: scan, conditioning: .init(), restartInterval: restartInterval
             )
             guard stream.write(ecs) != nil else {
-                throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
+                throw .encoding(.unsupportedProcess(self.layout.process))
             }
             try stream.format(marker: .end)
             return
@@ -308,7 +308,7 @@ extension JPEG.Data.Spectral {
         let ecs: [UInt8] = coded.ecs
 
         guard stream.write(ecs) != nil else {
-            throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
+            throw .encoding(.unsupportedProcess(self.layout.process))
         }
 
         try stream.format(marker: .end)
@@ -326,7 +326,7 @@ extension JPEG.Data.Spectral {
         progressive stream: inout Destination,
         restartInterval: Int,
         script: [JPEG.Header.Scan]? = nil
-    ) throws where Destination: JPEG.Bytestream.Destination {
+    ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         if restartInterval > 0 {
             try stream.format(
                 marker: .restartInterval,
@@ -355,7 +355,7 @@ extension JPEG.Data.Spectral {
                 scan: scan, encoders: .init(tables), restartInterval: restartInterval
             )
             guard stream.write(ecs) != nil else {
-                throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
+                throw .encoding(.unsupportedProcess(self.layout.process))
             }
         }
     }
@@ -375,7 +375,7 @@ extension JPEG.Data.Planar {
         progressive: Bool = false,
         arithmetic: Bool = false,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
-    ) throws where Destination: JPEG.Bytestream.Destination {
+    ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
         // sequential process, which is the same coding under a different
@@ -387,7 +387,7 @@ extension JPEG.Data.Planar {
                 ? .baseline
                 : .extended(coding: coding, differential: false)
         guard process.precisions.contains(precision) else {
-            throw JPEG.EncodingError.unsupportedPrecision(precision)
+            throw .encoding(.unsupportedPrecision(precision))
         }
         let baseline: Bool = process == .baseline
 
@@ -432,7 +432,7 @@ extension JPEG.Data.Rectangular {
         progressive: Bool = false,
         arithmetic: Bool = false,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
-    ) throws where Destination: JPEG.Bytestream.Destination {
+    ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
         // sequential process, which is the same coding under a different
@@ -444,7 +444,7 @@ extension JPEG.Data.Rectangular {
                 ? .baseline
                 : .extended(coding: coding, differential: false)
         guard process.precisions.contains(precision) else {
-            throw JPEG.EncodingError.unsupportedPrecision(precision)
+            throw .encoding(.unsupportedPrecision(precision))
         }
         let baseline: Bool = process == .baseline
 
