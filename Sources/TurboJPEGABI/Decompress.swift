@@ -13,7 +13,14 @@ extension Instance {
         _ jpegSize: Int
     ) throws -> JPEG.Data.Rectangular<JPEG.Common> {
         var stream: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
-        let image: JPEG.Data.Rectangular<JPEG.Common> = try .decompress(stream: &stream)
+        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
+
+        // The scaling factor is applied by transforming fewer coefficients per
+        // block rather than by resampling afterwards, which is the whole reason
+        // a decoder offers scaling at all.
+        let image: JPEG.Data.Rectangular<JPEG.Common> = spectral.rectangular(
+            scale: 8 * self.scalingFactor.numerator / self.scalingFactor.denominator
+        )
 
         self.parameters[TJPARAM_JPEGWIDTH.id] = .init(image.width)
         self.parameters[TJPARAM_JPEGHEIGHT.id] = .init(image.height)
@@ -25,7 +32,36 @@ extension Instance {
         self.parameters[TJPARAM_PROGRESSIVE.id] = image.layout.process.isProgressive ? 1 : 0
         self.parameters[TJPARAM_LOSSLESS.id] = 0
 
-        return image
+        // The reported dimensions are the JPEG's own, not the scaled output's:
+        // a caller computes the latter with TJSCALED. Recorded before cropping
+        // for the same reason.
+        self.parameters[TJPARAM_JPEGWIDTH.id] = .init(spectral.layout.width)
+        self.parameters[TJPARAM_JPEGHEIGHT.id] = .init(spectral.layout.height)
+
+        return try self.cropped(image)
+    }
+
+    /// Applies the cropping region, if one is set.
+    ///
+    /// Cropped after decoding rather than during it. libjpeg can skip whole
+    /// MCU rows above the region, which is faster; doing it here is correct at
+    /// every offset instead of only block-aligned ones, and the difference does
+    /// not show in the result.
+    func cropped(
+        _ image: JPEG.Data.Rectangular<JPEG.Common>
+    ) throws -> JPEG.Data.Rectangular<JPEG.Common> {
+        guard let region: (x: Int, y: Int, width: Int, height: Int) = self.croppingRegion else {
+            return image
+        }
+        guard
+        let cropped: JPEG.Data.Rectangular<JPEG.Common> = image.cropped(to: region)
+        else {
+            throw Failure.message(
+                "cropping region \(region.width)x\(region.height)+\(region.x)+\(region.y) "
+                    + "does not fit in the \(image.width)x\(image.height) image"
+            )
+        }
+        return cropped
     }
 
     /// Decodes a JPEG to component planes, stopping one tier above the
