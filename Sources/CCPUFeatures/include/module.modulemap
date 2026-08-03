@@ -1,0 +1,4 @@
+module CCPUFeatures {
+    header "cpufeatures.h"
+    export *
+}
