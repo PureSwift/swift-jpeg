@@ -1,0 +1,4 @@
+module CJPEGAccel {
+    header "jpeg_accel.h"
+    export *
+}
