@@ -34,12 +34,25 @@ stock TurboJPEG header can link and use.
 ## Requirements
 
 Swift 6.0 or later. The `JPEG` module imports nothing — not Foundation, not a
-platform module — so it should build anywhere Swift does, including Embedded
-Swift. That is a constraint to be enforced rather than trusted:
+platform module — and it builds for **Embedded Swift**:
 
 ```sh
 ! grep -rlE '^\s*import ' Sources/JPEG/
+swiftc -enable-experimental-feature Embedded -wmo -Osize \
+       -swift-version 6 -c Sources/JPEG/*.swift -o /tmp/embedded.o
 ```
+
+Both are checked on every push, because they are the kind of thing one
+convenient `import Foundation` undoes silently.
+
+Embedded is why the engine throws `JPEG.Failure` rather than using a plain
+`throws`. An untyped `throws` is `throws(any Error)`, and an existential needs
+runtime machinery an embedded target does not have — so a single unannotated
+`throws` anywhere in the engine takes the whole platform away. The four
+stage-specific error enumerations are unchanged and are still the useful
+classification; `JPEG.Failure` only gathers them so the throw can be declared.
+Functions the engine generic over a thrown type, like the block accessors, use
+`throws(E)` rather than `rethrows`, because `rethrows` propagates `any Error`.
 
 Because the engine performs no I/O of its own, reading a file is the caller's
 job. Bytes go in through `JPEG.Bytestream.Source`, which `[UInt8]` already
@@ -256,6 +269,18 @@ being written more carefully.
 ```sh
 swift test
 ```
+
+Continuous integration runs the tests, the C conformance suite, the two
+discipline checks above and the benchmark, on x86-64 and on native arm64
+runners. arm64 is not optional coverage — it is the only place the NEON kernels
+run at all.
+
+The performance job asserts a *ratio* between the portable and accelerated
+kernels measured moments apart in one process, never an absolute time. A shared
+runner under unknown load cannot be held to a number of seconds without becoming
+flaky, and a flaky check gets ignored; the load slows both kernels alike, so the
+ratio survives it. Absolute figures go to the run summary, which is what they
+are good for.
 
 Fixtures are 133×101 — a multiple of neither 8 nor 16 — so every case exercises
 MCU padding at the right and bottom edges. Reference decodes come from
