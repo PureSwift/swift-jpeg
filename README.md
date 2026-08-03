@@ -12,6 +12,8 @@ stock TurboJPEG header can link and use.
 
 | | |
 | --- | --- |
+| Lossless process (encode + decode) | ✅ |
+| 16-bit precision | ✅ |
 | Baseline sequential decode | ✅ |
 | Extended sequential decode | ⚠️ shares the baseline path, untested |
 | Grayscale, 4:4:4, 4:2:2, 4:2:0 | ✅ |
@@ -89,6 +91,17 @@ meaning for its components — a frame header lists identifiers and sampling
 factors and stops there. A component set the library does not recognize becomes
 a *nonconforming* format instead of an error, so the image still decodes to
 planes and only the color reading is left to the caller.
+
+The **lossless process** (T.81 Annex H) is a second codec sharing only the
+container: no transform, no quantization, no frequency domain. Each sample is
+predicted from its already-coded neighbours and only the error is coded, so the
+samples come back bit-exact. It is also the only route to 16-bit precision,
+which the DCT-based processes cannot carry.
+
+Lossless images store **RGB directly**, with `R`, `G` and `B` component
+identifiers, rather than converting to YCbCr. That conversion is a fixed-point
+round trip costing about one count, which would make "lossless" untrue — the
+conformance program caught exactly that before the format existed.
 
 Entropy coding is Huffman throughout. The Annex K sample tables are used where
 they suffice, since matching what every other encoder emits keeps output
