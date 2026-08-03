@@ -13,6 +13,11 @@ extension Instance {
         _ jpegSize: Int
     ) throws -> JPEG.Data.Rectangular<JPEG.Common> {
         let bytes: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
+        // The lossless process shares the container and nothing else, so it is
+        // detected from the frame marker and handled entirely separately.
+        if case .lossless = try Instance.process(of: bytes) {
+            return try self.decodeLossless(jpegBuf, jpegSize)
+        }
         self.decodedProfile = try? ICCProfile.profile(in: bytes)
 
         let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(bytes)
@@ -154,6 +159,14 @@ public func tj3Decompress8(
         let flip: Bool = instance.parameter(TJPARAM_BOTTOMUP) != 0
         let planes: Int = image.stride
         let width: Int = image.width
+        // An image stored as RGB needs no inverse transform; applying one would
+        // corrupt it, and skipping it is what keeps a lossless decode exact.
+        let direct: Bool
+        if case .rgb = image.layout.format {
+            direct = true
+        } else {
+            direct = false
+        }
 
         // Reading through the image's subscript costs a bounds check and an
         // index computation per component, a million times over on a megapixel
@@ -180,13 +193,22 @@ public func tj3Decompress8(
                         continue
                     }
 
-                    let color: JPEG.RGB = planes == 1
-                        ? .init(.init(truncatingIfNeeded: samples[source]))
-                        : JPEG.YCbCr(
+                    let color: JPEG.RGB
+                    if planes == 1 {
+                        color = .init(.init(truncatingIfNeeded: samples[source]))
+                    } else if direct {
+                        color = .init(
+                            .init(truncatingIfNeeded: samples[source]),
+                            .init(truncatingIfNeeded: samples[source + 1]),
+                            .init(truncatingIfNeeded: samples[source + 2])
+                        )
+                    } else {
+                        color = JPEG.YCbCr(
                             y: .init(truncatingIfNeeded: samples[source]),
                             cb: .init(truncatingIfNeeded: samples[source + 1]),
                             cr: .init(truncatingIfNeeded: samples[source + 2])
                         ).rgb
+                    }
 
                     pixel[format.red] = color.r
                     pixel[format.green] = color.g
