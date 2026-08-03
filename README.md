@@ -5,10 +5,10 @@ TurboJPEG C ABI.
 
 ## Status
 
-Early, but a working codec: decoding handles baseline and progressive JPEGs,
-and baseline encoding produces files libjpeg-turbo reads cleanly. Both
-directions are verified against libjpeg-turbo rather than only against
-themselves.
+A working codec with a working C ABI. Decoding handles baseline and progressive
+JPEGs; baseline encoding produces files libjpeg-turbo reads cleanly. The build
+produces a real `libturbojpeg.so.0` that a C program compiled against the
+stock TurboJPEG header can link and use.
 
 | | |
 | --- | --- |
@@ -21,7 +21,7 @@ themselves.
 | Baseline encoding | ✅ |
 | Progressive encoding | ❌ not yet |
 | JFIF / EXIF metadata | ❌ not yet |
-| TurboJPEG C ABI | ❌ groundwork only |
+| TurboJPEG C ABI | ⚠️ 13 of 81 symbols; the rest stubbed |
 
 ## Requirements
 
@@ -94,10 +94,19 @@ TurboJPEG can load this instead without being recompiled. The engine is
 deliberately kept ignorant that a C API exists; the boundary will be a separate
 target that depends on it.
 
-The groundwork is in `scripts/`: the 81 exported symbols grouped by ELF version
-node, and linker scripts for both platforms. `CMakeLists.txt` builds the engine
-today and carries the shared-library wiring, inert until the boundary target
-lands.
+`cmake --build` produces `libturbojpeg.so.0`: correct soname, all eight
+`TURBOJPEG_*` version nodes, exactly the 81 published symbols, and no Swift
+symbols leaked past the version script.
+
+Thirteen symbols are implemented — the TJ3 lifecycle, parameters, buffer sizing,
+and the 8-bit compress and decompress paths. The other 68 are generated C stubs
+that return the failure value their signature documents, so the library loads
+and every entry point resolves; the unfinished ones fail like ordinary errors
+rather than crashing or returning something plausible. `scripts/implemented.txt`
+tracks which is which, and the split is enforced by the linker: listing a name
+early is a missing symbol, listing it late is a duplicate.
+
+Run `Conformance/run.sh` to build the library and exercise it from C.
 
 TurboJPEG is a good substitution target where the libjpeg API is not. `tjhandle`
 is `void *`, so the handle is genuinely opaque and the engine can own its own
@@ -105,6 +114,11 @@ data; `jpeglib.h` by contrast defines `jpeg_decompress_struct` in the public
 header and callers read `cinfo.output_width` directly, leaving no seam to build
 against. TurboJPEG also has no variadic functions, so nothing needs to stay
 hand-written C.
+
+One wrinkle worth knowing if you read the header: from libjpeg-turbo 3.2,
+`tj3Init` is a *macro* expanding to `tj3InitVersion(initType,
+TURBOJPEG_VERSION_NUMBER)`. Modern clients therefore never call `tj3Init` by
+name, but older binaries did bind to that symbol, so both are implemented.
 
 ## Testing
 
