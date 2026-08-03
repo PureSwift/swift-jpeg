@@ -13,6 +13,7 @@ stock TurboJPEG header can link and use.
 | | |
 | --- | --- |
 | Lossless process (encode + decode) | ✅ |
+| Lossless cropping and custom filters | ✅ |
 | 16-bit precision | ✅ |
 | Baseline sequential decode | ✅ |
 | Extended sequential decode | ⚠️ shares the baseline path, untested |
