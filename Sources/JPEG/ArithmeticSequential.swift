@@ -55,7 +55,7 @@ extension JPEG.Data.Spectral {
         scan: JPEG.Header.Scan,
         conditioning: JPEG.Arithmetic.Conditioners,
         restartInterval: Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         let planes: [Int] = try self.layout.validate(scan: scan)
         let interleaved: Bool = planes.count > 1
         let units: (x: Int, y: Int) = interleaved
@@ -113,9 +113,9 @@ extension JPEG.Data.Spectral {
         }
 
         guard decoded == total else {
-            throw JPEG.DecodingError.truncatedEntropyCodedSegment(
+            throw .decoding(.truncatedEntropyCodedSegment(
                 decoded: decoded, expected: total
-            )
+            ))
         }
     }
 
@@ -127,7 +127,7 @@ extension JPEG.Data.Spectral {
         coder: inout JPEG.Arithmetic.Decoder,
         statistics: inout JPEG.Arithmetic.Statistics,
         slot: Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         let dcConditioning: JPEG.Arithmetic.Conditioning = conditioning.dc(component.dc)
         let acConditioning: JPEG.Arithmetic.Conditioning = conditioning.ac(component.ac)
 
@@ -150,7 +150,7 @@ extension JPEG.Data.Spectral {
                 while coder.decode(&dc[index]) != 0 {
                     magnitude <<= 1
                     guard magnitude != 0x8000 else {
-                        throw JPEG.DecodingError.invalidEntropyCodedSymbol
+                        throw .decoding(.invalidEntropyCodedSymbol)
                     }
                     index += 1
                 }
@@ -211,7 +211,7 @@ extension JPEG.Data.Spectral {
                 index += 3
                 k += 1
                 guard k < 64 else {
-                    throw JPEG.DecodingError.invalidEntropyCodedSymbol
+                    throw .decoding(.invalidEntropyCodedSymbol)
                 }
             }
 
@@ -227,7 +227,7 @@ extension JPEG.Data.Spectral {
                 while coder.decode(&ac[index]) != 0 {
                     magnitude <<= 1
                     guard magnitude != 0x8000 else {
-                        throw JPEG.DecodingError.invalidEntropyCodedSymbol
+                        throw .decoding(.invalidEntropyCodedSymbol)
                     }
                     index += 1
                 }
