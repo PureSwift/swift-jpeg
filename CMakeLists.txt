@@ -62,6 +62,33 @@ endfunction()
 
 swift_jpeg_add_module(JPEG)
 
+# -- accelerated kernels -----------------------------------------------------
+#
+# Two C targets and a Swift one. The C is here because Swift has neither inline
+# assembly nor a cpuid intrinsic; the individual kernels carry a target
+# attribute, so these compile for the baseline and use AVX2 only where the
+# running processor permits.
+
+set(CCPU_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Sources/CCPUFeatures/include)
+set(CACCEL_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Sources/CJPEGAccel/include)
+
+add_library(CCPUFeatures STATIC Sources/CCPUFeatures/cpufeatures.c)
+target_include_directories(CCPUFeatures PUBLIC ${CCPU_INCLUDE_DIR})
+set_target_properties(CCPUFeatures PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_library(CJPEGAccel STATIC Sources/CJPEGAccel/transforms_avx2.c)
+target_include_directories(CJPEGAccel PUBLIC ${CACCEL_INCLUDE_DIR})
+target_link_libraries(CJPEGAccel PUBLIC CCPUFeatures)
+set_target_properties(CJPEGAccel PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+swift_jpeg_add_module(JPEGAccelerate)
+target_link_libraries(JPEGAccelerate PUBLIC JPEG CJPEGAccel CCPUFeatures)
+target_compile_options(JPEGAccelerate PRIVATE
+    "SHELL:-Xcc -I${CCPU_INCLUDE_DIR}"
+    "SHELL:-Xcc -I${CACCEL_INCLUDE_DIR}"
+    "SHELL:-Xcc -fmodule-map-file=${CCPU_INCLUDE_DIR}/module.modulemap"
+    "SHELL:-Xcc -fmodule-map-file=${CACCEL_INCLUDE_DIR}/module.modulemap")
+
 # -- the shared library ------------------------------------------------------
 #
 # libturbojpeg.so.0, made of two halves: the Swift boundary target for the
@@ -75,10 +102,12 @@ set(TURBOJPEG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Sources/CTurboJPEG/include
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Sources/TurboJPEGABI)
     swift_jpeg_add_module(TurboJPEGABI)
-    target_link_libraries(TurboJPEGABI PUBLIC JPEG)
+    target_link_libraries(TurboJPEGABI PUBLIC JPEG JPEGAccelerate)
     # The boundary imports the vendored header as a Clang module, so the Swift
     # compiler needs both the search path and the module map.
     target_compile_options(TurboJPEGABI PRIVATE
+        "SHELL:-Xcc -I${CCPU_INCLUDE_DIR}"
+        "SHELL:-Xcc -I${CACCEL_INCLUDE_DIR}"
         "SHELL:-Xcc -I${TURBOJPEG_INCLUDE_DIR}"
         "SHELL:-Xcc -fmodule-map-file=${TURBOJPEG_INCLUDE_DIR}/module.modulemap")
 
@@ -126,9 +155,18 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Sources/TurboJPEGABI)
         # libraries in separate runs of the final command, and an archive
         # scanned before the whole-archive raised its undefined references
         # contributes nothing to them.
+        #
+        # Order matters for the same reason: each archive must be scanned after
+        # whatever raises references into it. The boundary references the
+        # accelerator, the accelerator references the engine and the C kernels,
+        # and the C kernels reference feature detection, so they are listed in
+        # that order and not in dependency order.
         target_link_options(turbojpeg PRIVATE
             "LINKER:--whole-archive,$<TARGET_FILE:TurboJPEGABI>,--no-whole-archive"
-            "LINKER:$<TARGET_FILE:JPEG>")
+            "LINKER:$<TARGET_FILE:JPEGAccelerate>"
+            "LINKER:$<TARGET_FILE:JPEG>"
+            "LINKER:$<TARGET_FILE:CJPEGAccel>"
+            "LINKER:$<TARGET_FILE:CCPUFeatures>")
 
         if(SWIFT_JPEG_STATIC_STDLIB)
             target_link_options(turbojpeg PRIVATE -static-stdlib)
