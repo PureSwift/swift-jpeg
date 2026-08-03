@@ -27,6 +27,32 @@ extension Instance {
 
         return image
     }
+
+    /// Decodes a JPEG to component planes, stopping one tier above the
+    /// interleaved image.
+    ///
+    /// Shares the header bookkeeping with ``decode(_:_:)`` so the two report
+    /// the same geometry.
+    func decodePlanar(
+        _ jpegBuf: UnsafePointer<UInt8>,
+        _ jpegSize: Int
+    ) throws -> JPEG.Data.Planar<JPEG.Common> {
+        var stream: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
+        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
+
+        self.parameters[TJPARAM_JPEGWIDTH.id] = .init(spectral.layout.width)
+        self.parameters[TJPARAM_JPEGHEIGHT.id] = .init(spectral.layout.height)
+        self.parameters[TJPARAM_PRECISION.id] = .init(spectral.layout.format.precision)
+        self.parameters[TJPARAM_SUBSAMP.id] = Subsampling.value(of: spectral.layout)
+        self.parameters[TJPARAM_COLORSPACE.id] = spectral.layout.planes.count == 1
+            ? TJCS_GRAY.rawValue
+            : TJCS_YCbCr.rawValue
+        self.parameters[TJPARAM_PROGRESSIVE.id] =
+            spectral.layout.process.isProgressive ? 1 : 0
+        self.parameters[TJPARAM_LOSSLESS.id] = 0
+
+        return spectral.decomposed()
+    }
 }
 
 @c @implementation
