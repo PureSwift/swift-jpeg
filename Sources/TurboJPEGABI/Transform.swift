@@ -106,9 +106,6 @@ public func tj3Transform(
             if transform.options & TJXOPT_GRAY != 0 {
                 return instance.fail("discarding chrominance is not implemented")
             }
-            if transform.options & TJXOPT_PROGRESSIVE != 0 {
-                return instance.fail("progressive output is not implemented")
-            }
             // PERFECT asks us to refuse rather than lose the partial edge. That
             // is the whole point of the option, so it is honored exactly.
             if transform.options & TJXOPT_PERFECT != 0, !source.isPerfect(for: rotation) {
@@ -121,7 +118,19 @@ public func tj3Transform(
                 continue
             }
 
-            let transformed: JPEG.Data.Spectral<JPEG.Common> = source.transformed(rotation)
+            var transformed: JPEG.Data.Spectral<JPEG.Common> = source.transformed(rotation)
+
+            // A transform may re-code the result progressively even when the
+            // source was sequential; the coefficients are the same either way.
+            let progressive: Bool = transform.options & TJXOPT_PROGRESSIVE != 0
+                || instance.parameter(TJPARAM_PROGRESSIVE) != 0
+            if progressive,
+               let recoded: JPEG.Data.Spectral<JPEG.Common> = transformed.reprocessed(
+                   as: .progressive(coding: .huffman, differential: false)
+               )
+            {
+                transformed = recoded
+            }
 
             // The tables come from the transformed image, not from a fresh set:
             // its coefficients were never dequantized, so they are only
