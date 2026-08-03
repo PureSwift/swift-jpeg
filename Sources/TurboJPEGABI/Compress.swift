@@ -130,7 +130,8 @@ public func tj3Compress8(
         try image.compress(
             stream: &encoded,
             quality: .init(quality),
-            restartInterval: restartInterval
+            restartInterval: restartInterval,
+            metadata: instance.iccProfile.map(ICCProfile.segments(of:)) ?? []
         )
 
         // With NOREALLOC the caller owns the buffer and it must not be
