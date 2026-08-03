@@ -73,3 +73,8 @@ tjDecompressToYUV2
 tjDecompressToYUVPlanes
 tjCompressFromYUV
 tjCompressFromYUVPlanes
+
+# Lossless transformation.
+tj3Transform
+tj3TransformBufSize
+tjTransform
