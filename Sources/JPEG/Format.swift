@@ -230,13 +230,10 @@ extension JPEG.YCbCr {
     }
 
     private static func clamp(_ value: Int32) -> UInt8 {
-        if value < 0 {
-            return 0
-        } else if value > 255 {
-            return 255
-        } else {
-            return .init(value)
-        }
+        // Written as min and max rather than a branch chain: the result is
+        // data-dependent and unpredictable, and there are three of these per
+        // pixel, so a mispredict costs more than the arithmetic it guards.
+        .init(Swift.min(Swift.max(value, 0), 255))
     }
 }
 
