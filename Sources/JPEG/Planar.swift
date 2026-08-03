@@ -96,11 +96,27 @@ extension JPEG.Data.Spectral {
     /// themselves are intact and the caller may still want the rest of the
     /// image.
     public func decomposed() -> JPEG.Data.Planar<Format> {
+        self.decomposed(scale: 8)
+    }
+
+    /// Dequantizes and transforms this image into samples at a reduced size.
+    ///
+    /// Each 8×8 block becomes `n`×`n` samples, so the image comes out `n/8` of
+    /// its coded size. This is not decode-then-resample: the higher frequencies
+    /// are never transformed at all, which is why a one-eighth image costs a
+    /// sixty-fourth of the transform work. It is also why the result is
+    /// slightly softer than a resampled full decode would be — the detail is
+    /// discarded rather than averaged.
+    ///
+    /// -   Parameter n:
+    ///     The output block size, 1 through 8.
+    public func decomposed(scale n: Int) -> JPEG.Data.Planar<Format> {
+        precondition(1 ... 8 ~= n)
         let precision: Int = self.layout.format.precision
 
         let planes: [JPEG.Data.Planar<Format>.Plane] = self.planes.map { plane in
             var output: JPEG.Data.Planar<Format>.Plane = .init(
-                size: (x: plane.blocks.x * 8, y: plane.blocks.y * 8)
+                size: (x: plane.blocks.x * n, y: plane.blocks.y * n)
             )
 
             guard let table: JPEG.Table.Quantization = self.quanta[plane.quanta] else {
@@ -116,10 +132,11 @@ extension JPEG.Data.Spectral {
                 for bx: Int in 0 ..< plane.blocks.x {
                     let samples: [UInt16] = JPEG.IDCT.transform(
                         JPEG.IDCT.dequantize(plane.block(x: bx, y: by), by: table),
-                        precision: precision
+                        precision: precision,
+                        size: n
                     )
-                    for i: Int in 0 ..< 64 {
-                        output[x: bx * 8 + (i & 7), y: by * 8 + (i >> 3)] = samples[i]
+                    for i: Int in 0 ..< n * n {
+                        output[x: bx * n + i % n, y: by * n + i / n] = samples[i]
                     }
                 }
             }
@@ -127,6 +144,10 @@ extension JPEG.Data.Spectral {
             return output
         }
 
-        return .init(planes: planes, layout: self.layout)
+        var layout: JPEG.Layout<Format> = self.layout
+        layout.width = (self.layout.width * n + 7) / 8
+        layout.height = (self.layout.height * n + 7) / 8
+
+        return .init(planes: planes, layout: layout)
     }
 }
