@@ -8,6 +8,11 @@ let package = Package(
             name: "JPEG",
             targets: ["JPEG"]
         ),
+        .library(
+            name: "TurboJPEGABI",
+            type: .dynamic,
+            targets: ["TurboJPEGABI"]
+        ),
     ],
     targets: [
         // The codec engine.
@@ -18,6 +23,20 @@ let package = Package(
         // Byte input and output are abstracted behind protocols in
         // `Bytestream.swift` rather than being performed here.
         .target(name: "JPEG"),
+
+        // The vendored TurboJPEG header, plus generated stubs for the exported
+        // symbols that are not implemented yet.
+        .target(
+            name: "CTurboJPEG",
+            exclude: ["LICENSE"]
+        ),
+
+        // The C ABI boundary. Depends on the engine; the engine knows nothing
+        // about it, which is the point.
+        .target(
+            name: "TurboJPEGABI",
+            dependencies: ["JPEG", "CTurboJPEG"]
+        ),
 
         // Tests may import Foundation freely — the no-imports rule applies to
         // the engine, not to what exercises it.
