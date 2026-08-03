@@ -131,6 +131,11 @@ extension JPEG {
         /// A scan header declared a successive approximation split that does
         /// not refine the previous one by exactly one bit.
         case invalidScanSuccessiveApproximation(high: Int, low: Int)
+        /// A lossless scan named a predictor outside 1 ... 7.
+        ///
+        /// T.81 Table H.1 defines seven; zero means "no prediction" and is
+        /// reserved for differential frames in a hierarchical sequence.
+        case invalidPredictor(Int)
 
         /// A table definition selected a slot outside the permitted range.
         case invalidHuffmanTargetCode(UInt8)
@@ -173,6 +178,8 @@ extension JPEG.ParsingError {
             return "invalid scan band range"
         case .invalidScanSuccessiveApproximation:
             return "invalid scan successive approximation"
+        case .invalidPredictor:
+            return "invalid predictor"
         case .invalidHuffmanTargetCode:
             return "invalid huffman table destination"
         case .invalidHuffmanTypeCode:
@@ -213,6 +220,8 @@ extension JPEG.ParsingError {
             return "spectral band \(band) is not valid for the \(process) process"
         case .invalidScanSuccessiveApproximation(high: let high, low: let low):
             return "successive approximation (high: \(high), low: \(low)) must refine by one bit"
+        case .invalidPredictor(let value):
+            return "predictor selection value (\(value)) must lie in 1 ... 7"
         case .invalidHuffmanTargetCode(let code):
             return "huffman table destination (\(code)) must lie in 0 ... 3"
         case .invalidHuffmanTypeCode(let code):
