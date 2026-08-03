@@ -93,12 +93,20 @@ extension JPEG.Data.Spectral.Plane {
     /// Avoids the copy ``block(x:y:)`` makes, which matters because decoding
     /// touches every block of every plane exactly once.
     func withBlock<T>(
-        x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) -> T
-    ) -> T {
+        x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) throws -> T
+    ) rethrows -> T {
         let base: Int = ((y * self.blocks.x) + x) * 64
-        return self.buffer.withUnsafeBufferPointer {
-            body(.init(rebasing: $0[base ..< base + 64]))
+        return try self.buffer.withUnsafeBufferPointer {
+            try body(.init(rebasing: $0[base ..< base + 64]))
         }
+    }
+
+    /// Whether this plane contains the block at `(x, y)`.
+    ///
+    /// A scan codes whole MCUs, so a subsampled component at the right or
+    /// bottom edge of the image gets blocks the plane has no room for.
+    func contains(x: Int, y: Int) -> Bool {
+        0 ..< self.blocks.x ~= x && 0 ..< self.blocks.y ~= y
     }
 
     /// Runs `body` on one row of blocks, in place.
