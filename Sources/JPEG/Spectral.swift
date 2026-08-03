@@ -101,6 +101,22 @@ extension JPEG.Data.Spectral.Plane {
         }
     }
 
+    /// Runs `body` on one row of blocks, in place.
+    ///
+    /// Block-major storage makes a row contiguous: all 64 coefficients of the
+    /// first block, then the next, for the width of the plane. That is exactly
+    /// the shape a coefficient-domain filter expects, so it can be handed the
+    /// buffer directly rather than a copy of it.
+    public mutating func withBlockRow<T>(
+        _ y: Int,
+        _ body: (UnsafeMutableBufferPointer<Int16>) -> T
+    ) -> T {
+        let base: Int = y * self.blocks.x * 64
+        return self.buffer.withUnsafeMutableBufferPointer {
+            body(.init(rebasing: $0[base ..< base + self.blocks.x * 64]))
+        }
+    }
+
     /// Copies the block at `(x, y)` out as 64 row-major coefficients.
     public func block(x: Int, y: Int) -> [Int16] {
         guard 0 ..< self.blocks.x ~= x, 0 ..< self.blocks.y ~= y else {
@@ -151,6 +167,20 @@ extension JPEG.Data.Spectral {
         var image: Self = self
         image.layout.process = process
         return image
+    }
+
+    /// Runs `body` on one row of blocks of the given plane, in place.
+    ///
+    /// The entry point a coefficient-domain filter uses. It is exposed here
+    /// rather than on the plane because the planes themselves are not writable
+    /// from outside the module, and a filter must be able to change what it is
+    /// shown.
+    public mutating func withBlockRow<T>(
+        plane: Int,
+        _ y: Int,
+        _ body: (UnsafeMutableBufferPointer<Int16>) -> T
+    ) -> T {
+        self.planes[plane].withBlockRow(y, body)
     }
 
     /// Records the image height once a `DNL` segment supplies it.
