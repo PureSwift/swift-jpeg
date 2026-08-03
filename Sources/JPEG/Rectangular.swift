@@ -147,29 +147,55 @@ extension JPEG.Data.Planar {
                 continue
             }
 
-            for y: Int in 0 ..< height {
-                let v: Int = Self.source(y, sampling.y, scale.y)
-                // Arithmetic shift floors, including for the negative
-                // coordinates the half-sample offset produces at the top and
-                // left margins, so the fraction stays in 0 ..< 1.
-                let row: Int = v >> 16
-                let fy: Int64 = .init(v - (row << 16))
+            // Column coordinates repeat on every row, so they are computed
+            // once for the plane rather than a million times.
+            var columns: [Int] = .init(repeating: 0, count: width)
+            var fractions: [Int32] = .init(repeating: 0, count: width)
+            for x: Int in 0 ..< width {
+                let u: Int = Self.source(x, sampling.x, scale.x)
+                columns[x] = u >> 16
+                fractions[x] = .init(u - (columns[x] << 16))
+            }
 
-                for x: Int in 0 ..< width {
-                    let u: Int = Self.source(x, sampling.x, scale.x)
-                    let column: Int = u >> 16
-                    let fx: Int64 = .init(u - (column << 16))
+            let extent: (x: Int, y: Int) = source.size
+            source.withSamples { samples in
+                values.withUnsafeMutableBufferPointer { values in
+                    for y: Int in 0 ..< height {
+                        let v: Int = Self.source(y, sampling.y, scale.y)
+                        // Arithmetic shift floors, including for the negative
+                        // coordinates the half-sample offset produces at the
+                        // top and left margins, so the fraction stays in 0 ..< 1.
+                        let row: Int = v >> 16
+                        let fy: Int32 = .init(v - (row << 16))
 
-                    let a: Int64 = .init(source[x: column, y: row])
-                    let b: Int64 = .init(source[x: column + 1, y: row])
-                    let c: Int64 = .init(source[x: column, y: row + 1])
-                    let d: Int64 = .init(source[x: column + 1, y: row + 1])
+                        // Clamping the two source rows once per output row
+                        // removes two bounds checks from every pixel.
+                        let above: Int = Swift.min(Swift.max(row, 0), extent.y - 1) * extent.x
+                        let below: Int = Swift.min(Swift.max(row + 1, 0), extent.y - 1) * extent.x
 
-                    let top: Int64 = (a << 16) + (b - a) * fx
-                    let bottom: Int64 = (c << 16) + (d - c) * fx
-                    let value: Int64 = ((top << 16) + (bottom - top) * fy + (1 << 31)) >> 32
+                        for x: Int in 0 ..< width {
+                            let column: Int = columns[x]
+                            let fx: Int32 = fractions[x]
+                            let left: Int = Swift.min(Swift.max(column, 0), extent.x - 1)
+                            let right: Int = Swift.min(Swift.max(column + 1, 0), extent.x - 1)
 
-                    values[(y * width + x) * stride + plane] = .init(value)
+                            // 32-bit intermediates: a sample is at most 16 bits
+                            // and a fraction at most 16, so the products fit
+                            // with room to spare and the 64-bit arithmetic this
+                            // used before was pure overhead.
+                            let a: Int32 = .init(samples[above + left])
+                            let b: Int32 = .init(samples[above + right])
+                            let c: Int32 = .init(samples[below + left])
+                            let d: Int32 = .init(samples[below + right])
+
+                            let top: Int32 = (a << 8) + ((b - a) * fx >> 8)
+                            let bottom: Int32 = (c << 8) + ((d - c) * fx >> 8)
+                            let value: Int32 =
+                                ((top << 8) + ((bottom - top) * fy >> 8) + (1 << 15)) >> 16
+
+                            values[(y * width + x) * stride + plane] = .init(value)
+                        }
+                    }
                 }
             }
         }
