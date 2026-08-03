@@ -35,7 +35,7 @@ extension JPEG.FDCT {
                 var sum: Int64 = 0
                 for x: Int in 0 ..< 8 {
                     let sample: Int32 = .init(samples[y << 3 | x]) - shift
-                    sum += .init(JPEG.IDCT.basis[u][x]) * .init(sample)
+                    sum += .init(JPEG.IDCT.scaledBasis[8][u][x]) * .init(sample)
                 }
                 // The same descale split the inverse uses: 8 of the 13
                 // fractional bits here, the rest after the second pass.
@@ -48,7 +48,7 @@ extension JPEG.FDCT {
             for v: Int in 0 ..< 8 {
                 var sum: Int64 = 0
                 for y: Int in 0 ..< 8 {
-                    sum += .init(JPEG.IDCT.basis[v][y]) * .init(rows[y << 3 | u])
+                    sum += .init(JPEG.IDCT.scaledBasis[8][v][y]) * .init(rows[y << 3 | u])
                 }
                 // 13 fractional bits from this pass, 5 carried over, and 2 more
                 // for the factor of 1/4 the separable form leaves behind.
