@@ -142,6 +142,35 @@ int main(void)
     check(strstr(tj3GetErrorStr(c12), "lossless") != NULL,
           "and explains that it needs the lossless process");
 
+    printf("progressive compression\n");
+    tj3Set(c, TJPARAM_PROGRESSIVE, 1);
+    unsigned char *prog = NULL; size_t progSize = 0;
+    rc = tj3Compress8(c, pixels, width, 0, height, TJPF_RGB, &prog, &progSize);
+    if (rc) printf("        (%s)\n", tj3GetErrorStr(c));
+    check(rc == 0, "TJPARAM_PROGRESSIVE compresses");
+    /* SOF2 is the progressive start-of-frame marker. */
+    int sof2 = 0, scans = 0;
+    for (size_t k = 0; prog && k + 1 < progSize; k++) {
+        if (prog[k] != 0xFF) continue;
+        if (prog[k + 1] == 0xC2) sof2 = 1;
+        if (prog[k + 1] == 0xDA) scans++;
+    }
+    check(sof2, "the output is SOF2");
+    check(scans == 10, "it has the expected ten scans");
+    check(progSize < jpegSize, "and is smaller than the sequential encoding");
+
+    tj3Set(d, TJPARAM_PROGRESSIVE, 0);
+    check(tj3DecompressHeader(d, prog, progSize) == 0, "its header reads");
+    check(tj3Get(d, TJPARAM_PROGRESSIVE) == 1, "and reports the image as progressive");
+    unsigned char *progPixels = malloc((size_t)width * height * 3);
+    check(tj3Decompress8(d, prog, progSize, progPixels, 0, TJPF_RGB) == 0, "it decompresses");
+    /* Same coefficients as the sequential encoding, so the decodes must match
+     * exactly rather than merely closely. */
+    check(memcmp(progPixels, whole, (size_t)width * height * 3) == 0,
+          "and decodes identically to the sequential encoding");
+    tj3Free(prog); free(progPixels);
+    tj3Set(c, TJPARAM_PROGRESSIVE, 0);
+
     printf("image files\n");
     check(tj3SaveImage8(c, "/tmp/extras-test.ppm", pixels, width, 0, height, TJPF_RGB) == 0,
           "tj3SaveImage8 writes a PPM");
