@@ -135,12 +135,9 @@ int main(void)
     printf("  info  12-bit worst-case deviation %ld of 4095\n", worst);
     check(worst < 400, "12-bit survives the round trip");
 
-    unsigned short *w16 = malloc(16 * sizeof(unsigned short));
-    unsigned char *j16 = NULL; size_t s16 = 0;
-    check(tj3Compress16(c12, w16, 2, 0, 2, TJPF_RGB, &j16, &s16) == -1,
-          "16-bit compression is refused");
-    check(strstr(tj3GetErrorStr(c12), "lossless") != NULL,
-          "and explains that it needs the lossless process");
+    /* 16-bit was checked here as a refusal until the lossless process made it
+     * real. It is exercised properly further down. */
+
 
     printf("progressive compression\n");
     tj3Set(c, TJPARAM_PROGRESSIVE, 1);
@@ -170,6 +167,61 @@ int main(void)
           "and decodes identically to the sequential encoding");
     tj3Free(prog); free(progPixels);
     tj3Set(c, TJPARAM_PROGRESSIVE, 0);
+
+    printf("lossless\n");
+    tj3Set(c, TJPARAM_LOSSLESS, 1);
+    tj3Set(c, TJPARAM_LOSSLESSPSV, 4);
+    unsigned char *ll = NULL; size_t llSize = 0;
+    rc = tj3Compress8(c, pixels, width, 0, height, TJPF_RGB, &ll, &llSize);
+    if (rc) printf("        (%s)\n", tj3GetErrorStr(c));
+    check(rc == 0, "TJPARAM_LOSSLESS compresses");
+    int sof3 = 0;
+    for (size_t k = 0; ll && k + 1 < llSize; k++)
+        if (ll[k] == 0xFF && ll[k + 1] == 0xC3) sof3 = 1;
+    check(sof3, "the output is SOF3");
+
+    check(tj3DecompressHeader(d, ll, llSize) == 0, "its header reads");
+    check(tj3Get(d, TJPARAM_LOSSLESS) == 1, "and reports the image as lossless");
+    unsigned char *llPixels = malloc((size_t)width * height * 3);
+    rc = tj3Decompress8(d, ll, llSize, llPixels, 0, TJPF_RGB);
+    if (rc) printf("        (%s)\n", tj3GetErrorStr(d));
+    check(rc == 0, "it decompresses");
+    /* The whole point: every sample identical, not merely close. */
+    check(memcmp(llPixels, pixels, (size_t)width * height * 3) == 0,
+          "and reproduces the source pixels exactly");
+
+    /* All seven predictors must be exact. */
+    int predictorFailures = 0;
+    for (int psv = 1; psv <= 7; psv++) {
+        tj3Set(c, TJPARAM_LOSSLESSPSV, psv);
+        unsigned char *p = NULL; size_t pn = 0;
+        if (tj3Compress8(c, pixels, width, 0, height, TJPF_RGB, &p, &pn) ||
+            tj3Decompress8(d, p, pn, llPixels, 0, TJPF_RGB) ||
+            memcmp(llPixels, pixels, (size_t)width * height * 3) != 0)
+            predictorFailures++;
+        tj3Free(p);
+    }
+    check(predictorFailures == 0, "all seven predictors round trip exactly");
+
+    printf("16-bit precision\n");
+    unsigned short *deep = malloc((size_t)width * height * 3 * sizeof(unsigned short));
+    for (long k = 0; k < (long)width * height * 3; k++)
+        deep[k] = (unsigned short)(pixels[k] * 257);
+    tj3Set(c, TJPARAM_LOSSLESSPSV, 1);
+    unsigned char *j16b = NULL; size_t s16b = 0;
+    rc = tj3Compress16(c, deep, width, 0, height, TJPF_RGB, &j16b, &s16b);
+    if (rc) printf("        (%s)\n", tj3GetErrorStr(c));
+    check(rc == 0, "tj3Compress16 succeeds");
+    check(tj3DecompressHeader(d, j16b, s16b) == 0, "its header reads");
+    check(tj3Get(d, TJPARAM_PRECISION) == 16, "it reports 16-bit precision");
+    unsigned short *back16 = malloc((size_t)width * height * 3 * sizeof(unsigned short));
+    rc = tj3Decompress16(d, j16b, s16b, back16, 0, TJPF_RGB);
+    if (rc) printf("        (%s)\n", tj3GetErrorStr(d));
+    check(rc == 0, "tj3Decompress16 succeeds");
+    check(memcmp(deep, back16, (size_t)width * height * 3 * sizeof(unsigned short)) == 0,
+          "and 16-bit samples survive exactly");
+    tj3Free(ll); tj3Free(j16b); free(llPixels); free(deep); free(back16);
+    tj3Set(c, TJPARAM_LOSSLESS, 0);
 
     printf("image files\n");
     check(tj3SaveImage8(c, "/tmp/extras-test.ppm", pixels, width, 0, height, TJPF_RGB) == 0,
@@ -221,7 +273,7 @@ int main(void)
 
     tj3Free(jpeg); tj3Free(jpeg12); tj3Free(tagged);
     tj3Destroy(c); tj3Destroy(d); tj3Destroy(c12); tj3Destroy(d12);
-    free(pixels); free(cropped); free(whole); free(wide); free(back); free(w16); free(profile);
+    free(pixels); free(cropped); free(whole); free(wide); free(back); free(profile);
 
     printf("\n%s\n", failures ? "FAILURES" : "all checks passed");
     return failures ? 1 : 0;
