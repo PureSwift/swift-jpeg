@@ -18,13 +18,13 @@ extension JPEG.Layout {
         height: Int,
         sampling: [JPEG.Component.Sampling],
         selectors: [JPEG.Table.Quantization.Key]
-    ) throws {
+    ) throws(JPEG.Failure) {
         let keys: [JPEG.Component.Key] = format.components
         guard sampling.count == keys.count, selectors.count == keys.count else {
-            throw JPEG.EncodingError.unsupportedProcess(process)
+            throw .encoding(.unsupportedProcess(process))
         }
         guard 1 ... 65535 ~= width, 1 ... 65535 ~= height else {
-            throw JPEG.EncodingError.imageTooLarge(width: width, height: height)
+            throw .encoding(.imageTooLarge(width: width, height: height))
         }
 
         var residents: [JPEG.Component.Key: Int] = [:]
@@ -162,7 +162,7 @@ extension JPEG.Data.Planar {
     ///     be present.
     public func transformed(
         quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization]
-    ) throws -> JPEG.Data.Spectral<Format> {
+    ) throws(JPEG.Failure) -> JPEG.Data.Spectral<Format> {
         var spectral: JPEG.Data.Spectral<Format> = .init(layout: self.layout)
         spectral.quanta = quanta
 
@@ -171,7 +171,7 @@ extension JPEG.Data.Planar {
         for plane: Int in self.layout.planes.indices {
             let selector: JPEG.Table.Quantization.Key = self.layout.planes[plane].selector
             guard let table: JPEG.Table.Quantization = quanta[selector] else {
-                throw JPEG.EncodingError.undefinedQuantizationTable(selector)
+                throw .encoding(.undefinedQuantizationTable(selector))
             }
 
             let blocks: (x: Int, y: Int) = spectral.planes[plane].blocks
@@ -227,7 +227,7 @@ extension JPEG.Data.Rectangular {
     /// Subsamples, transforms and quantizes in one step.
     public func spectral(
         quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization]
-    ) throws -> JPEG.Data.Spectral<Format> {
+    ) throws(JPEG.Failure) -> JPEG.Data.Spectral<Format> {
         try self.subsampled().transformed(quanta: quanta)
     }
 }
