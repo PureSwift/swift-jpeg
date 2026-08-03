@@ -100,11 +100,11 @@ extension JPEG.Table.Huffman {
     ///     -   counts: How many codes have each length from 1 through 16.
     ///     -   values: The symbols, in code order. Must be `counts.reduce(0, +)`
     ///         elements long.
-    init(counts: [Int], values: [UInt8], target: Key, class: Class) throws {
+    init(counts: [Int], values: [UInt8], target: Key, class: Class) throws(JPEG.Failure) {
         precondition(counts.count == 16)
 
         guard values.count == counts.reduce(0, +) else {
-            throw JPEG.ParsingError.invalidHuffmanTable
+            throw .parsing(.invalidHuffmanTable)
         }
 
         var mincode: [Int] = .init(repeating: 0, count: 17)
@@ -128,7 +128,7 @@ extension JPEG.Table.Huffman {
             // codes have been handed out than the length can address, the code
             // space is overfull and the table is not decodable.
             guard code <= 1 << length else {
-                throw JPEG.ParsingError.invalidHuffmanTable
+                throw .parsing(.invalidHuffmanTable)
             }
             code <<= 1
         }
@@ -170,17 +170,17 @@ extension JPEG.Table.Huffman {
     ///
     /// -   Parameter data:
     ///     The segment body, excluding the length field.
-    public static func parse(_ data: [UInt8]) throws -> [Self] {
+    public static func parse(_ data: [UInt8]) throws(JPEG.Failure) -> [Self] {
         var tables: [Self] = []
         var base: Int = 0
 
         while base < data.count {
             guard base + 17 <= data.count else {
-                throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+                throw .parsing(.truncatedMarkerSegmentBody(
                     .huffman,
                     count: data.count,
                     expected: (base + 17) ... (base + 17)
-                )
+                ))
             }
 
             let byte: UInt8 = data[base]
@@ -189,22 +189,22 @@ extension JPEG.Table.Huffman {
             switch byte >> 4 {
             case 0:     `class` = .dc
             case 1:     `class` = .ac
-            default:    throw JPEG.ParsingError.invalidHuffmanTypeCode(byte >> 4)
+            default:    throw .parsing(.invalidHuffmanTypeCode(byte >> 4))
             }
 
             let slot: UInt8 = byte & 0x0F
             guard slot < 4 else {
-                throw JPEG.ParsingError.invalidHuffmanTargetCode(slot)
+                throw .parsing(.invalidHuffmanTargetCode(slot))
             }
 
             let counts: [Int] = data[base + 1 ..< base + 17].map(Int.init)
             let total: Int = counts.reduce(0, +)
             guard base + 17 + total <= data.count else {
-                throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+                throw .parsing(.truncatedMarkerSegmentBody(
                     .huffman,
                     count: data.count,
                     expected: (base + 17 + total) ... (base + 17 + total)
-                )
+                ))
             }
 
             tables.append(
@@ -235,7 +235,7 @@ extension JPEG.Table.Huffman {
     /// is nearly all of them: canonical assignment gives the shortest codes to
     /// the commonest symbols. Longer ones fall back to walking the bits, which
     /// is correct but costs a peek per bit.
-    public func symbol(from bits: inout JPEG.Bitstream) throws -> UInt8 {
+    public func symbol(from bits: inout JPEG.Bitstream) throws(JPEG.Failure) -> UInt8 {
         let entry: UInt16 = self.lookup[.init(bits.peek(8))]
         let length: Int = .init(entry & 0xFF)
         if length > 0 {
@@ -251,6 +251,6 @@ extension JPEG.Table.Huffman {
                 return self.values[self.offset[length] + code - self.mincode[length]]
             }
         }
-        throw JPEG.DecodingError.invalidEntropyCodedSymbol
+        throw .decoding(.invalidEntropyCodedSymbol)
     }
 }
