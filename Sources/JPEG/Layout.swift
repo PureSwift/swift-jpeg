@@ -49,17 +49,17 @@ extension JPEG.Layout {
     ///
     /// Components the format omits are dropped rather than decoded, which is
     /// how a caller asks for luminance only from a color image.
-    public init(frame: JPEG.Header.Frame) throws {
+    public init(frame: JPEG.Header.Frame) throws(JPEG.Failure) {
         guard
         let format: Format = Format.recognize(
             .init(frame.components.keys),
             precision: frame.precision
         )
         else {
-            throw JPEG.DecodingError.unrecognizedColorFormat(
+            throw .decoding(.unrecognizedColorFormat(
                 .init(frame.components.keys),
                 precision: frame.precision
-            )
+            ))
         }
 
         let keys: [JPEG.Component.Key] = format.components
@@ -69,10 +69,10 @@ extension JPEG.Layout {
 
         for (plane, key): (Int, JPEG.Component.Key) in keys.enumerated() {
             guard let component: JPEG.Component = frame.components[key] else {
-                throw JPEG.DecodingError.undefinedScanComponentReference(
+                throw .decoding(.undefinedScanComponentReference(
                     key,
                     .init(frame.components.keys)
-                )
+                ))
             }
             planes.append(component)
             residents[key] = plane
@@ -158,13 +158,13 @@ extension JPEG.Layout {
     ///
     /// -   Returns:
     ///     One plane index per scan component, in the scan's interleave order.
-    public func validate(scan: JPEG.Header.Scan) throws -> [Int] {
-        try scan.components.map {
-            guard let plane: Int = self.residents[$0.component] else {
-                throw JPEG.DecodingError.undefinedScanComponentReference(
-                    $0.component,
+    public func validate(scan: JPEG.Header.Scan) throws(JPEG.Failure) -> [Int] {
+        try scan.components.map { (component) throws(JPEG.Failure) -> Int in
+            guard let plane: Int = self.residents[component.component] else {
+                throw .decoding(.undefinedScanComponentReference(
+                    component.component,
                     .init(self.residents.keys)
-                )
+                ))
             }
             return plane
         }
