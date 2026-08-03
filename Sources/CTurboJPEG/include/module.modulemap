@@ -1,0 +1,7 @@
+// Exposes the vendored TurboJPEG header to Swift, so that exported functions
+// can be type-checked against the declarations clients compiled against rather
+// than against a hand-written restatement of them.
+module CTurboJPEG {
+    header "turbojpeg.h"
+    export *
+}
