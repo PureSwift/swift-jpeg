@@ -183,7 +183,7 @@ extension JPEG.Table.Huffman {
         _ standard: Standard,
         class: Class,
         target: Key
-    ) throws -> Self {
+    ) throws(JPEG.Failure) -> Self {
         let definition: (counts: [Int], values: [UInt8]) = Self.definition(standard, class: `class`)
         return try .init(
             counts: definition.counts,
