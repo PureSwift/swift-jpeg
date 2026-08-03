@@ -83,8 +83,9 @@ public func tj3Transform(
         // Decoded once and reused: every output transforms the same
         // coefficients, and re-reading the source per transform would be the
         // expensive half of the work repeated.
-        var stream: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
-        let source: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
+        let source: JPEG.Data.Spectral<JPEG.Common> = try .decompress(
+            [UInt8](UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
+        )
 
         instance.parameters[TJPARAM_JPEGWIDTH.id] = .init(source.layout.width)
         instance.parameters[TJPARAM_JPEGHEIGHT.id] = .init(source.layout.height)
