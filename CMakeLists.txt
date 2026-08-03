@@ -64,16 +64,29 @@ swift_jpeg_add_module(JPEG)
 
 # -- the shared library ------------------------------------------------------
 #
-# Not built yet: it needs Sources/TurboJPEGABI, one @c function per exported
-# symbol, which does not exist until the ABI phase. The wiring below is kept
-# current so that phase is a matter of adding sources rather than working the
-# link out from scratch, and so the non-obvious parts stay written down.
+# libturbojpeg.so.0, made of two halves: the Swift boundary target for the
+# symbols that are implemented, and generated C stubs for the rest. Together
+# they cover the whole published API, so a client links and loads against this
+# unchanged even though most of it is not written yet.
+#
+# Guarded so the engine still builds on its own if the boundary is absent.
+
+set(TURBOJPEG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Sources/CTurboJPEG/include)
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Sources/TurboJPEGABI)
     swift_jpeg_add_module(TurboJPEGABI)
     target_link_libraries(TurboJPEGABI PUBLIC JPEG)
+    # The boundary imports the vendored header as a Clang module, so the Swift
+    # compiler needs both the search path and the module map.
+    target_compile_options(TurboJPEGABI PRIVATE
+        "SHELL:-Xcc -I${TURBOJPEG_INCLUDE_DIR}"
+        "SHELL:-Xcc -fmodule-map-file=${TURBOJPEG_INCLUDE_DIR}/module.modulemap")
 
-    add_library(turbojpeg SHARED)
+    # The generated stubs are the other half of the export table: everything
+    # published but not yet implemented in Swift.
+    add_library(turbojpeg SHARED
+        Sources/CTurboJPEG/gen/stubs.c)
+    target_include_directories(turbojpeg PRIVATE ${TURBOJPEG_INCLUDE_DIR})
     target_link_libraries(turbojpeg PRIVATE TurboJPEGABI)
 
     # Driving the link with swiftc is what pulls in the Swift runtime and the
