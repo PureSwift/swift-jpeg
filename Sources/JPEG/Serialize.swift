@@ -28,7 +28,15 @@ extension JPEG.Header.Frame {
 
 extension JPEG.Header.Scan {
     /// Serializes this header as a start-of-scan segment body.
-    public func serialized() -> [UInt8] {
+    ///
+    /// The process is needed because a lossless scan reuses the two spectral
+    /// selection fields for something else: `Ss` carries the predictor and `Se`
+    /// is always zero. Deriving them from the band, as the DCT processes do,
+    /// writes a predictor into `Se` and produces a header no decoder accepts.
+    ///
+    /// -   Parameter process:
+    ///     The coding process the frame declared.
+    public func serialized(process: JPEG.Process) -> [UInt8] {
         var data: [UInt8] = []
         data.reserveCapacity(4 + 2 * self.components.count)
 
@@ -41,7 +49,11 @@ extension JPEG.Header.Scan {
         }
 
         data.append(.init(truncatingIfNeeded: self.band.lowerBound))
-        data.append(.init(truncatingIfNeeded: self.band.upperBound - 1))
+        if case .lossless = process {
+            data.append(0)
+        } else {
+            data.append(.init(truncatingIfNeeded: self.band.upperBound - 1))
+        }
         // A first pass writes a high field of zero; the range's sentinel upper
         // bound is not a bit position and must not be written.
         let high: Int = self.isFirstPass ? 0 : self.bits.upperBound
@@ -269,7 +281,7 @@ extension JPEG.Data.Spectral {
             )
         }
 
-        try stream.format(marker: .scan, body: scan.serialized())
+        try stream.format(marker: .scan, body: scan.serialized(process: self.layout.process))
 
         let ecs: [UInt8] = coded.ecs
 
@@ -315,7 +327,7 @@ extension JPEG.Data.Spectral {
                 try stream.format(marker: .huffman, body: table.serialized())
             }
 
-            try stream.format(marker: .scan, body: scan.serialized())
+            try stream.format(marker: .scan, body: scan.serialized(process: self.layout.process))
 
             let ecs: [UInt8] = try self.encode(
                 scan: scan, encoders: .init(tables), restartInterval: restartInterval
