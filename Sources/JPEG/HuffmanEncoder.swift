@@ -6,16 +6,29 @@ extension JPEG.Table.Huffman {
     /// come from the same construction, so building this from a table cannot
     /// disagree with what a decoder would reconstruct — which is the property
     /// that makes an encode-decode round trip meaningful as a test.
-    public struct Encoder: Sendable {
+    public struct Encoder {
         /// The code for each symbol, indexed by symbol value.
         private let codes: [UInt16]
         /// The code length for each symbol, or 0 if the table does not assign
         /// one.
         private let lengths: [Int]
+        /// Where symbols are tallied instead of written, when this encoder is
+        /// gathering statistics for an optimal table.
+        private let counter: Counter?
 
-        init(codes: [UInt16], lengths: [Int]) {
+        init(codes: [UInt16], lengths: [Int], counter: Counter? = nil) {
             self.codes = codes
             self.lengths = lengths
+            self.counter = counter
+        }
+
+        /// An encoder that counts symbols rather than emitting them.
+        public static func counting(into counter: Counter) -> Self {
+            .init(
+                codes: .init(repeating: 0, count: 256),
+                lengths: .init(repeating: 0, count: 256),
+                counter: counter
+            )
         }
     }
 
@@ -49,14 +62,20 @@ extension JPEG.Table.Huffman.Encoder {
 
     /// Writes the code for one symbol.
     ///
-    /// A symbol the table does not assign is dropped rather than written as a
-    /// zero-length code, which would silently corrupt the stream. In practice
-    /// this cannot happen for the standard tables, which cover every symbol a
-    /// baseline encoder produces.
-    public func encode(_ symbol: UInt8, to bits: inout JPEG.BitstreamWriter) {
+    /// Throws when the table assigns the symbol no code. Silently skipping it
+    /// would desynchronize everything after it, and the failure would surface
+    /// as a corrupt image rather than as an error — which is exactly what
+    /// happened here with 12-bit samples, whose magnitude categories run past
+    /// the eleven the Annex K tables cover.
+    public func encode(_ symbol: UInt8, to bits: inout JPEG.BitstreamWriter) throws {
+        if let counter: Counter = self.counter {
+            counter.record(symbol)
+            return
+        }
+
         let index: Int = .init(symbol)
         guard self.lengths[index] > 0 else {
-            return
+            throw JPEG.EncodingError.unencodableSymbol(symbol)
         }
         bits.write(self.codes[index], count: self.lengths[index])
     }
