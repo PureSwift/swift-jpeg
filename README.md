@@ -19,10 +19,13 @@ stock TurboJPEG header can link and use.
 | Interpolated chroma upsampling | ✅ |
 | Progressive decode | ✅ |
 | Baseline encoding | ✅ |
+| Optimized Huffman tables | ✅ |
 | Progressive encoding | ❌ not yet |
+| 12-bit precision | ✅ |
+| Scaled and cropped decoding | ✅ |
 | JFIF / EXIF metadata | ❌ not yet |
 | Lossless transformation | ✅ |
-| TurboJPEG C ABI | ⚠️ 61 of 81 symbols; the rest stubbed |
+| TurboJPEG C ABI | ✅ all 81 symbols |
 
 ## Requirements
 
