@@ -202,6 +202,43 @@ extension JPEG.Data.Spectral {
     }
 }
 
+extension JPEG.Data.Planar {
+    /// Encodes these planes as a baseline JPEG at the given quality.
+    ///
+    /// The samples are taken as already being in the frame's colorspace and at
+    /// each component's own resolution, so neither color conversion nor
+    /// subsampling happens here. That is what a caller who has their own YUV
+    /// data wants: those two steps are exactly what they have already done.
+    public func compress<Destination>(
+        stream: inout Destination,
+        quality: Int = 85,
+        restartInterval: Int = 0
+    ) throws where Destination: JPEG.Bytestream.Destination {
+        guard self.layout.format.precision == 8 else {
+            throw JPEG.EncodingError.unsupportedPrecision(self.layout.format.precision)
+        }
+
+        var quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization] = [:]
+        var tables: JPEG.Tables = .init()
+
+        quanta[0] = .standard(.luminance, quality: quality, target: 0)
+        tables.push(try .standard(.luminance, class: .dc, target: 0))
+        tables.push(try .standard(.luminance, class: .ac, target: 0))
+
+        if self.layout.planes.count > 1 {
+            quanta[1] = .standard(.chrominance, quality: quality, target: 1)
+            tables.push(try .standard(.chrominance, class: .dc, target: 1))
+            tables.push(try .standard(.chrominance, class: .ac, target: 1))
+        }
+
+        try self.transformed(quanta: quanta).compress(
+            stream: &stream,
+            tables: tables,
+            restartInterval: restartInterval
+        )
+    }
+}
+
 extension JPEG.Data.Rectangular {
     /// Encodes this image as a baseline JPEG at the given quality.
     ///
