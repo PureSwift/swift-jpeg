@@ -88,8 +88,23 @@ struct Subsampling {
         case TJSAMP_411.rawValue:   self.init(x: 4, y: 1, gray: false)
         case TJSAMP_441.rawValue:   self.init(x: 1, y: 4, gray: false)
         case TJSAMP_410.rawValue:   self.init(x: 4, y: 2, gray: false)
+        case TJSAMP_24.rawValue:    self.init(x: 2, y: 4, gray: false)
         default:                    return nil
         }
+    }
+
+    /// The iMCU dimensions this arrangement implies, in samples.
+    ///
+    /// Equal to libjpeg-turbo's `tjMCUWidth` and `tjMCUHeight` tables, which
+    /// are just eight times the luma sampling factors. Derived rather than
+    /// transcribed so the two cannot disagree.
+    var mcu: (width: Int, height: Int) {
+        (width: 8 * self.luma.x, height: 8 * self.luma.y)
+    }
+
+    /// How many planes an image in this arrangement has.
+    var planes: Int {
+        self.isGray ? 1 : 3
     }
 
     private init(x: Int, y: Int, gray: Bool) {
@@ -114,6 +129,7 @@ struct Subsampling {
         case (4, 1):    return TJSAMP_411.rawValue
         case (1, 4):    return TJSAMP_441.rawValue
         case (4, 2):    return TJSAMP_410.rawValue
+        case (2, 4):    return TJSAMP_24.rawValue
         default:        return TJSAMP_UNKNOWN.rawValue
         }
     }
