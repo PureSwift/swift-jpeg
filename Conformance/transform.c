@@ -17,6 +17,25 @@
 #include "turbojpeg.h"
 
 static int failures = 0;
+static int filterCalls = 0;
+
+/* Zeroes every coefficient above the fourth row and column of each block, which
+ * is a crude low-pass filter. It exists to prove the callback receives real,
+ * writable coefficients laid out as documented — a filter handed a copy, or the
+ * wrong stride, would not visibly blur the image. */
+static int zeroHighFrequencies(short *coeffs, tjregion arrayRegion,
+                               tjregion planeRegion, int componentID,
+                               int transformID, tjtransform *transform)
+{
+    (void)planeRegion; (void)componentID; (void)transformID; (void)transform;
+    filterCalls++;
+    int blocks = arrayRegion.w / 8;
+    for (int b = 0; b < blocks; b++)
+        for (int v = 0; v < 8; v++)
+            for (int u = 0; u < 8; u++)
+                if (v >= 4 || u >= 4) coeffs[b * 64 + v * 8 + u] = 0;
+    return 0;
+}
 
 static void check(int condition, const char *what)
 {
@@ -172,8 +191,74 @@ int main(void)
     }
     tj3Free(odd);
 
-    check(apply(handle, source, sourceSize, TJXOP_ROT90, TJXOPT_CROP, &out, &outSize) == -1,
-          "the unimplemented TJXOPT_CROP is refused");
+    printf("cropping\n");
+    {
+        tjtransform t;
+        memset(&t, 0, sizeof t);
+        t.op = TJXOP_NONE;
+        t.options = TJXOPT_CROP;
+        /* 128x96 at 4:2:0 has 16x16 MCUs, so this origin is aligned. */
+        t.r.x = 16; t.r.y = 32; t.r.w = 64; t.r.h = 48;
+        unsigned char *cr = NULL; size_t crSize = 0;
+        int rc2 = tj3Transform(handle, source, sourceSize, 1, &cr, &crSize, &t);
+        if (rc2) printf("        (%s)\n", tj3GetErrorStr(handle));
+        check(rc2 == 0, "an MCU-aligned crop succeeds");
+
+        int cw = 0, ch = 0;
+        unsigned char *cropped = rc2 ? NULL : decodeTo(cr, crSize, &cw, &ch);
+        check(cropped && cw == 64 && ch == 48, "it produces a 64x48 image");
+        /* The coefficients are carried over untouched, so the interior must
+         * decode identically to the same region of the full image.
+         *
+         * The outermost pixels cannot, and that is not a defect: chroma
+         * upsampling interpolates from neighbours, and at the new boundary
+         * those neighbours are gone. Decoding a cropped 4:2:0 image and
+         * cropping a decoded one are different operations at the edge, in this
+         * library and in libjpeg alike. Measured here: 0 differing samples two
+         * pixels in, 660 in the two-pixel border. */
+        int interior = 0;
+        for (int y = 2; y < 46; y++)
+            for (int x = 2; x < 62; x++)
+                if (cropped && memcmp(cropped + (y * 64 + x) * 3,
+                                      original + ((y + 32) * width + (x + 16)) * 3, 3) != 0)
+                    interior++;
+        check(cropped && interior == 0,
+              "and its interior matches the original region exactly");
+        free(cropped); tj3Free(cr);
+
+        /* An unaligned origin cannot be done losslessly and must be refused
+         * rather than quietly rounded. */
+        memset(&t, 0, sizeof t);
+        t.op = TJXOP_NONE; t.options = TJXOPT_CROP;
+        t.r.x = 8; t.r.y = 0; t.r.w = 32; t.r.h = 32;
+        unsigned char *bad = NULL; size_t badSize = 0;
+        check(tj3Transform(handle, source, sourceSize, 1, &bad, &badSize, &t) == -1,
+              "an origin off the MCU grid is refused");
+        check(strstr(tj3GetErrorStr(handle), "MCU") != NULL, "and says why");
+        tj3Free(bad);
+    }
+
+    printf("custom coefficient filter\n");
+    {
+        tjtransform t;
+        memset(&t, 0, sizeof t);
+        t.op = TJXOP_NONE;
+        t.customFilter = zeroHighFrequencies;
+        unsigned char *cf = NULL; size_t cfSize = 0;
+        int rc2 = tj3Transform(handle, source, sourceSize, 1, &cf, &cfSize, &t);
+        if (rc2) printf("        (%s)\n", tj3GetErrorStr(handle));
+        check(rc2 == 0, "a custom filter runs");
+        check(filterCalls > 0, "and was actually called");
+        /* Discarding the high frequencies must shrink the file and blur the
+         * image without changing its size. */
+        check(cfSize < sourceSize, "zeroing high frequencies shrinks the output");
+        int fw = 0, fh = 0;
+        unsigned char *filtered = rc2 ? NULL : decodeTo(cf, cfSize, &fw, &fh);
+        check(filtered && fw == width && fh == height, "the result is the same size");
+        check(filtered && memcmp(filtered, original, (size_t)width * height * 3) != 0,
+              "and its pixels changed");
+        free(filtered); tj3Free(cf);
+    }
 
     printf("multiple outputs in one call\n");
     tjtransform many[3];
