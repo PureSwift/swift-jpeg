@@ -76,7 +76,9 @@ add_library(CCPUFeatures STATIC Sources/CCPUFeatures/cpufeatures.c)
 target_include_directories(CCPUFeatures PUBLIC ${CCPU_INCLUDE_DIR})
 set_target_properties(CCPUFeatures PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(CJPEGAccel STATIC Sources/CJPEGAccel/transforms_avx2.c)
+add_library(CJPEGAccel STATIC
+    Sources/CJPEGAccel/transforms_avx2.c
+    Sources/CJPEGAccel/transforms_neon.c)
 target_include_directories(CJPEGAccel PUBLIC ${CACCEL_INCLUDE_DIR})
 target_link_libraries(CJPEGAccel PUBLIC CCPUFeatures)
 set_target_properties(CJPEGAccel PROPERTIES POSITION_INDEPENDENT_CODE ON)
