@@ -242,11 +242,41 @@ extension JPEG.Data.Spectral {
         else {
             return
         }
-        let plane: Plane = self.planes[component.plane]
+        // A block the scan codes but the plane does not contain — the padding
+        // at the right and bottom edges of a subsampled component. It is coded
+        // as all zeros, because the decoder walks the same grid and expects
+        // something here.
+        guard self.planes[component.plane].contains(x: block.x, y: block.y) else {
+            return try withUnsafeTemporaryAllocation(of: Int16.self, capacity: 64) {
+                zeros in
+                zeros.initialize(repeating: 0)
+                return try Self.encode(
+                    .init(zeros), dc: dc, ac: ac, to: &bits, predictor: &predictor
+                )
+            }
+        }
 
+        try self.planes[component.plane].withBlock(x: block.x, y: block.y) {
+            try Self.encode($0, dc: dc, ac: ac, to: &bits, predictor: &predictor)
+        }
+    }
+
+    /// Encodes one sequential block from 64 coefficients.
+    ///
+    /// Reading them through a pointer rather than the plane subscript: the
+    /// subscript range-checks the block coordinates for every one of the 64,
+    /// and taking a copy of the plane to read from — which is what the
+    /// straightforward spelling does — retains its storage once per block.
+    private static func encode(
+        _ coefficients: UnsafeBufferPointer<Int16>,
+        dc: JPEG.Table.Huffman.Encoder,
+        ac: JPEG.Table.Huffman.Encoder,
+        to bits: inout JPEG.BitstreamWriter,
+        predictor: inout Int32
+    ) throws {
         // The DC coefficient goes out as a difference from the previous block
         // of the same component.
-        let value: Int32 = .init(plane[x: block.x, y: block.y, z: 0])
+        let value: Int32 = .init(coefficients[0])
         let difference: Int = .init(value - predictor)
         predictor = value
 
@@ -263,7 +293,7 @@ extension JPEG.Data.Spectral {
         // each full sixteen, because only four bits carry the run.
         var run: Int = 0
         for z: Int in 1 ..< 64 {
-            let value: Int = .init(plane[x: block.x, y: block.y, z: JPEG.zigzag[z]])
+            let value: Int = .init(coefficients[JPEG.zigzag[z]])
 
             guard value != 0 else {
                 run += 1
