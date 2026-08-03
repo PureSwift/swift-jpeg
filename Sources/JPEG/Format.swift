@@ -51,6 +51,14 @@ extension JPEG {
         case y(JPEG.Component.Key, precision: Int)
         /// Three components, interpreted as YCbCr in declaration order.
         case ycc(JPEG.Component.Key, JPEG.Component.Key, JPEG.Component.Key, precision: Int)
+        /// Three components, interpreted as red, green and blue.
+        ///
+        /// Identified by the component identifiers `'R'`, `'G'` and `'B'`,
+        /// which is the convention for a JPEG that carries RGB directly. It
+        /// exists mainly for the lossless process: converting to YCbCr and back
+        /// is a fixed-point round trip that costs about one count, so an image
+        /// that must come back bit-exact cannot afford it.
+        case rgb(JPEG.Component.Key, JPEG.Component.Key, JPEG.Component.Key, precision: Int)
         /// A component set this library assigns no color meaning to.
         case nonconforming([JPEG.Component.Key], precision: Int)
     }
@@ -69,6 +77,12 @@ extension JPEG.Common: JPEG.Format {
         case 1:
             return .y(sorted[0], precision: precision)
         case 3:
+            // 'B', 'G', 'R' sorted by identifier. A stream using these says so
+            // deliberately; anything else is assumed to be YCbCr, which is what
+            // JFIF means by three components.
+            if sorted == [66, 71, 82] {
+                return .rgb(82, 71, 66, precision: precision)
+            }
             return .ycc(sorted[0], sorted[1], sorted[2], precision: precision)
         default:
             return .nonconforming(sorted, precision: precision)
@@ -81,6 +95,8 @@ extension JPEG.Common: JPEG.Format {
             return [y]
         case .ycc(let y, let cb, let cr, precision: _):
             return [y, cb, cr]
+        case .rgb(let r, let g, let b, precision: _):
+            return [r, g, b]
         case .nonconforming(let keys, precision: _):
             return keys
         }
@@ -90,6 +106,7 @@ extension JPEG.Common: JPEG.Format {
         switch self {
         case .y(_, precision: let precision),
              .ycc(_, _, _, precision: let precision),
+             .rgb(_, _, _, precision: let precision),
              .nonconforming(_, precision: let precision):
             return precision
         }
@@ -240,6 +257,18 @@ extension JPEG.YCbCr: JPEG.Color {
                     cr: JPEG.YCbCr.narrow(interleaved[$0 + 2], by: scale)
                 )
             }
+        case .rgb:
+            // Already RGB: convert forward so the caller still gets the YCbCr
+            // they asked for.
+            return stride(from: 0, to: interleaved.count - 2, by: 3).map {
+                .init(
+                    .init(
+                        JPEG.YCbCr.narrow(interleaved[$0], by: scale),
+                        JPEG.YCbCr.narrow(interleaved[$0 + 1], by: scale),
+                        JPEG.YCbCr.narrow(interleaved[$0 + 2], by: scale)
+                    )
+                )
+            }
         case .nonconforming(let keys, precision: _):
             // No color meaning is defined, so the first component stands in for
             // luminance and the rest are dropped. Callers who care should reach
@@ -252,7 +281,7 @@ extension JPEG.YCbCr: JPEG.Color {
     }
 
     /// Reduces a sample of arbitrary precision to 8 bits.
-    private static func narrow(_ sample: UInt16, by scale: Int) -> UInt8 {
+    static func narrow(_ sample: UInt16, by scale: Int) -> UInt8 {
         if scale > 0 {
             return .init(truncatingIfNeeded: sample >> UInt16(scale))
         } else if scale < 0 {
@@ -265,6 +294,18 @@ extension JPEG.YCbCr: JPEG.Color {
 
 extension JPEG.RGB: JPEG.Color {
     public static func unpack(_ interleaved: [UInt16], of format: JPEG.Common) -> [Self] {
-        JPEG.YCbCr.unpack(interleaved, of: format).map(\.rgb)
+        // An RGB format needs no conversion at all, and going through YCbCr
+        // would cost the exactness that format exists to preserve.
+        guard case .rgb(_, _, _, precision: let precision) = format else {
+            return JPEG.YCbCr.unpack(interleaved, of: format).map(\.rgb)
+        }
+        let scale: Int = precision - 8
+        return stride(from: 0, to: interleaved.count - 2, by: 3).map {
+            .init(
+                JPEG.YCbCr.narrow(interleaved[$0], by: scale),
+                JPEG.YCbCr.narrow(interleaved[$0 + 1], by: scale),
+                JPEG.YCbCr.narrow(interleaved[$0 + 2], by: scale)
+            )
+        }
     }
 }
