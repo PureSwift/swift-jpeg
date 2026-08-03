@@ -21,7 +21,8 @@ stock TurboJPEG header can link and use.
 | Baseline encoding | ✅ |
 | Progressive encoding | ❌ not yet |
 | JFIF / EXIF metadata | ❌ not yet |
-| TurboJPEG C ABI | ⚠️ 58 of 81 symbols; the rest stubbed |
+| Lossless transformation | ✅ |
+| TurboJPEG C ABI | ⚠️ 61 of 81 symbols; the rest stubbed |
 
 ## Requirements
 
@@ -69,9 +70,11 @@ let planar: JPEG.Data.Planar<JPEG.Common> = spectral.decomposed()
 
 An image is modeled at three tiers, and decoding walks down them:
 
-- **`Spectral`** — quantized DCT coefficients, JPEG's native form. Rotating,
-  cropping to a block boundary, or requantizing is lossless here and lossy
-  anywhere else.
+- **`Spectral`** — quantized DCT coefficients, JPEG's native form. Rotating or
+  reflecting an image here is *exactly* lossless: `image.transformed(.rotate90)`
+  rearranges numbers that are already exact, where rotating decoded pixels would
+  round three times. All eight symmetries of a rectangle are available, and a
+  transform followed by its inverse reproduces the original byte for byte.
 - **`Planar`** — samples, dequantized and inverse transformed, each component
   still at its own subsampled resolution. This is what `tj3DecompressToYUV8`
   hands back, and stopping here saves a consumer feeding a video encoder or a
@@ -100,12 +103,12 @@ target that depends on it.
 `TURBOJPEG_*` version nodes, exactly the 81 published symbols, and no Swift
 symbols leaked past the version script.
 
-Fifty-eight symbols are implemented: the TJ3 lifecycle, parameters and buffer
+Sixty-one symbols are implemented: the TJ3 lifecycle, parameters and buffer
 sizing, the 8-bit compress and decompress paths, the planar YUV surface in both
-directions, and the 1.x/2.x spelling of all of it. Covering the old API matters
+directions, lossless transformation, and the 1.x/2.x spelling of all of it. Covering the old API matters
 more than its size suggests — most software linking TurboJPEG today was written
 against it, so implementing only TJ3 would make this a drop-in for nothing
-already installed. The other 23 are generated C stubs
+already installed. The other 20 are generated C stubs
 that return the failure value their signature documents, so the library loads
 and every entry point resolves; the unfinished ones fail like ordinary errors
 rather than crashing or returning something plausible. `scripts/implemented.txt`
@@ -113,13 +116,14 @@ tracks which is which, and the split is enforced by the linker: listing a name
 early is a missing symbol, listing it late is a duplicate.
 
 Run `Conformance/run.sh` to build the library and exercise it from C — one
-program for the TJ3 API, one for the legacy API. Point `LD_LIBRARY_PATH` at a
+program each for the TJ3 API, the legacy API, the YUV surface, and lossless
+transformation. Point `LD_LIBRARY_PATH` at a
 real libjpeg-turbo instead and both should behave identically; that comparison
 is why they are C rather than more Swift tests.
 
 Not implemented, and refused rather than approximated: scaled decompression,
-lossless transformation, image file loading and saving, ICC profiles, and 12- or
-16-bit precision. A request for any of them fails through the API's own error
+cropping, custom coefficient filters, image file loading and saving, ICC
+profiles, and 12- or 16-bit precision. A request for any of them fails through the API's own error
 convention.
 
 TurboJPEG is a good substitution target where the libjpeg API is not. `tjhandle`
