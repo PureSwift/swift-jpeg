@@ -113,7 +113,7 @@ extension JPEG.Table.Quantization {
     ///
     /// -   Parameter data:
     ///     The segment body, excluding the length field.
-    public static func parse(_ data: [UInt8]) throws -> [Self] {
+    public static func parse(_ data: [UInt8]) throws(JPEG.Failure) -> [Self] {
         var tables: [Self] = []
         var base: Int = 0
 
@@ -124,22 +124,22 @@ extension JPEG.Table.Quantization {
             switch byte >> 4 {
             case 0:     precision = .uint8
             case 1:     precision = .uint16
-            default:    throw JPEG.ParsingError.invalidQuantizationPrecisionCode(byte >> 4)
+            default:    throw .parsing(.invalidQuantizationPrecisionCode(byte >> 4))
             }
 
             let slot: UInt8 = byte & 0x0F
             guard slot < 4 else {
-                throw JPEG.ParsingError.invalidQuantizationTargetCode(slot)
+                throw .parsing(.invalidQuantizationTargetCode(slot))
             }
 
             let stride: Int = precision == .uint8 ? 1 : 2
             let count: Int = 64 * stride
             guard base + 1 + count <= data.count else {
-                throw JPEG.ParsingError.truncatedMarkerSegmentBody(
+                throw .parsing(.truncatedMarkerSegmentBody(
                     .quantization,
                     count: data.count,
                     expected: (base + 1 + count) ... (base + 1 + count)
-                )
+                ))
             }
 
             // Values arrive in zigzag order; scatter them into row-major so
