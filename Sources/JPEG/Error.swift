@@ -349,6 +349,12 @@ extension JPEG {
         case undefinedQuantizationTable(JPEG.Table.Quantization.Key)
         /// A scan named a Huffman table that was never supplied.
         case undefinedHuffmanTable(JPEG.Table.Huffman.Key, JPEG.Table.Huffman.Class)
+        /// A Huffman table assigns no code to a symbol the data requires.
+        ///
+        /// The sample tables of T.81 Annex K cover the magnitude categories
+        /// 8-bit samples produce and no more, so 12-bit data needs tables built
+        /// from its own statistics.
+        case unencodableSymbol(UInt8)
         /// A coefficient did not fit in the 16 magnitude categories T.81
         /// defines.
         ///
@@ -375,6 +381,8 @@ extension JPEG.EncodingError {
             return "undefined quantization table"
         case .undefinedHuffmanTable:
             return "undefined huffman table"
+        case .unencodableSymbol:
+            return "unencodable symbol"
         case .coefficientOutOfRange:
             return "coefficient out of range"
         }
@@ -392,6 +400,8 @@ extension JPEG.EncodingError {
             return "a component references quantization table \(key), which was not supplied"
         case .undefinedHuffmanTable(let key, let `class`):
             return "a scan references \(`class`) huffman table \(key), which was not supplied"
+        case .unencodableSymbol(let symbol):
+            return "the huffman table assigns no code to symbol \(symbol)"
         case .coefficientOutOfRange(let value):
             return "coefficient \(value) exceeds the largest magnitude category T.81 defines"
         }
