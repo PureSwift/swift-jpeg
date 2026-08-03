@@ -15,8 +15,7 @@ extension Instance {
         let bytes: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
         self.decodedProfile = try? ICCProfile.profile(in: bytes)
 
-        var stream: [UInt8] = bytes
-        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
+        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(bytes)
 
         // The scaling factor is applied by transforming fewer coefficients per
         // block rather than by resampling afterwards, which is the whole reason
@@ -76,8 +75,9 @@ extension Instance {
         _ jpegBuf: UnsafePointer<UInt8>,
         _ jpegSize: Int
     ) throws -> JPEG.Data.Planar<JPEG.Common> {
-        var stream: [UInt8] = .init(UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
-        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
+        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(
+            [UInt8](UnsafeBufferPointer(start: jpegBuf, count: jpegSize))
+        )
 
         self.parameters[TJPARAM_JPEGWIDTH.id] = .init(spectral.layout.width)
         self.parameters[TJPARAM_JPEGHEIGHT.id] = .init(spectral.layout.height)
@@ -152,40 +152,51 @@ public func tj3Decompress8(
         // Rows are written bottom-up when the caller asks for it, which is what
         // a Windows bitmap wants and is why the option exists at all.
         let flip: Bool = instance.parameter(TJPARAM_BOTTOMUP) != 0
+        let planes: Int = image.stride
+        let width: Int = image.width
 
-        for y: Int in 0 ..< image.height {
-            let row: UnsafeMutablePointer<UInt8> =
-                dstBuf + (flip ? image.height - 1 - y : y) * stride
+        // Reading through the image's subscript costs a bounds check and an
+        // index computation per component, a million times over on a megapixel
+        // image. Taking the buffer once and walking it linearly is the
+        // difference between this loop dominating the decode and disappearing
+        // into it.
+        image.values.withUnsafeBufferPointer { samples in
+            for y: Int in 0 ..< image.height {
+                let row: UnsafeMutablePointer<UInt8> =
+                    dstBuf + (flip ? image.height - 1 - y : y) * stride
+                var source: Int = y * width * planes
 
-            for x: Int in 0 ..< image.width {
-                let pixel: UnsafeMutablePointer<UInt8> = row + x * format.size
+                for x: Int in 0 ..< width {
+                    let pixel: UnsafeMutablePointer<UInt8> = row + x * format.size
+                    defer {
+                        source += planes
+                    }
 
-                if format.isGray {
-                    // Taking the luminance plane is exact for a grayscale JPEG
-                    // and is the correct answer for a color one too, since Y is
-                    // already the luma the caller is asking for.
-                    pixel[0] = .init(truncatingIfNeeded: image[x: x, y: y, 0])
-                    continue
-                }
+                    if format.isGray {
+                        // Taking the luminance plane is exact for a grayscale
+                        // JPEG and is the right answer for a color one too,
+                        // since Y is already the luma being asked for.
+                        pixel[0] = .init(truncatingIfNeeded: samples[source])
+                        continue
+                    }
 
-                let color: JPEG.RGB
-                if image.stride == 1 {
-                    color = .init(.init(truncatingIfNeeded: image[x: x, y: y, 0]))
-                } else {
-                    color = JPEG.YCbCr(
-                        y: .init(truncatingIfNeeded: image[x: x, y: y, 0]),
-                        cb: .init(truncatingIfNeeded: image[x: x, y: y, 1]),
-                        cr: .init(truncatingIfNeeded: image[x: x, y: y, 2])
-                    ).rgb
-                }
+                    let color: JPEG.RGB = planes == 1
+                        ? .init(.init(truncatingIfNeeded: samples[source]))
+                        : JPEG.YCbCr(
+                            y: .init(truncatingIfNeeded: samples[source]),
+                            cb: .init(truncatingIfNeeded: samples[source + 1]),
+                            cr: .init(truncatingIfNeeded: samples[source + 2])
+                        ).rgb
 
-                pixel[format.red] = color.r
-                pixel[format.green] = color.g
-                pixel[format.blue] = color.b
-                // Only a real alpha channel is written. The X formats have a
-                // padding byte in the same position that must be left alone.
-                if let alpha: Int = format.alpha {
-                    pixel[alpha] = 0xFF
+                    pixel[format.red] = color.r
+                    pixel[format.green] = color.g
+                    pixel[format.blue] = color.b
+                    // Only a real alpha channel is written. The X formats have
+                    // a padding byte in the same position that must be left
+                    // alone.
+                    if let alpha: Int = format.alpha {
+                        pixel[alpha] = 0xFF
+                    }
                 }
             }
         }
