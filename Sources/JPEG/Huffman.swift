@@ -62,6 +62,19 @@ extension JPEG.Table {
         /// Where each length's symbols begin in ``values``.
         private let offset: [Int]
 
+        /// A lookup keyed on the next eight bits, resolving any code that
+        /// short in one step.
+        ///
+        /// Each entry packs the symbol in its high byte and the code length in
+        /// its low; a length of zero means the code is longer than eight bits
+        /// and the slow path has to walk it.
+        ///
+        /// Eight bits is the useful width because canonical codes are assigned
+        /// shortest first, so the common symbols are the short ones — in a
+        /// typical image the overwhelming majority of codes resolve here, and
+        /// the table costs 512 bytes.
+        private let lookup: [UInt16]
+
         /// The slot this table was defined in.
         public let target: Key
         /// Whether this table codes DC or AC coefficients.
@@ -120,8 +133,28 @@ extension JPEG.Table.Huffman {
             code <<= 1
         }
 
+        // Fill the fast path. Every code of length n claims the 2^(8-n)
+        // entries that begin with it, because the bits after it belong to
+        // whatever follows and cannot change which symbol this is.
+        var lookup: [UInt16] = .init(repeating: 0, count: 256)
+        var fast: Int = 0
+        var symbol: Int = 0
+        for length: Int in 1 ... 8 {
+            for _: Int in 0 ..< counts[length - 1] {
+                let code: Int = mincode[length] + (symbol - offset[length])
+                let start: Int = code << (8 - length)
+                for entry: Int in start ..< start + (1 << (8 - length)) {
+                    lookup[entry] = .init(values[symbol]) << 8 | .init(truncatingIfNeeded: length)
+                }
+                symbol += 1
+                fast += 1
+            }
+        }
+        _ = fast
+
         self.values = values
         self.counts = counts
+        self.lookup = lookup
         self.mincode = mincode
         self.maxcode = maxcode
         self.offset = offset
@@ -198,11 +231,18 @@ extension JPEG.Table.Huffman {
     /// canonical, a code's position within that range is also its symbol's
     /// position in ``values``, so no tree traversal is needed.
     ///
-    /// This is O(code length) per symbol, with no per-table lookup memory. A
-    /// primary lookup table over the first 8 bits would cut the common case to
-    /// a single indexing operation, and should be added once there is a
-    /// benchmark to justify the extra 256 entries per table.
+    /// Codes of eight bits or fewer resolve from ``lookup`` in one step, which
+    /// is nearly all of them: canonical assignment gives the shortest codes to
+    /// the commonest symbols. Longer ones fall back to walking the bits, which
+    /// is correct but costs a peek per bit.
     public func symbol(from bits: inout JPEG.Bitstream) throws -> UInt8 {
+        let entry: UInt16 = self.lookup[.init(bits.peek(8))]
+        let length: Int = .init(entry & 0xFF)
+        if length > 0 {
+            bits.advance(length)
+            return .init(truncatingIfNeeded: entry >> 8)
+        }
+
         var code: Int = 0
         for length: Int in 1 ... 16 {
             code = code << 1 | .init(bits.read(1))
