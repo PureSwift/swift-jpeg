@@ -78,3 +78,19 @@ tjCompressFromYUVPlanes
 tj3Transform
 tj3TransformBufSize
 tjTransform
+
+# The 1.0 API.
+TJBUFSIZE
+TJBUFSIZEYUV
+tjCompress
+tjDecompress
+
+# Scaled and cropped decoding.
+tj3SetScalingFactor
+tj3SetCroppingRegion
+
+# 12- and 16-bit precision.
+tj3Compress12
+tj3Decompress12
+tj3Compress16
+tj3Decompress16
