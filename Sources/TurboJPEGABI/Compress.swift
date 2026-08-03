@@ -58,9 +58,6 @@ public func tj3Compress8(
         return instance.fail("pitch \(pitch) is smaller than one row")
     }
 
-    if instance.parameter(TJPARAM_ARITHMETIC) != 0 {
-        return instance.fail("arithmetic coding is not implemented")
-    }
 
     let quality: Int32 = instance.parameter(TJPARAM_QUALITY, default: 95)
     let requested: Int32 = instance.parameter(TJPARAM_SUBSAMP, default: TJSAMP_444.rawValue)
@@ -142,6 +139,7 @@ public func tj3Compress8(
             quality: .init(quality),
             restartInterval: restartInterval,
             progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0,
+            arithmetic: instance.parameter(TJPARAM_ARITHMETIC) != 0,
             metadata: instance.iccProfile.map(ICCProfile.segments(of:)) ?? []
         )
         }
