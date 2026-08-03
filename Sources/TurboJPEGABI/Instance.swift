@@ -49,6 +49,16 @@ final class Instance {
     var errorCode: Int32
     var errorMessage: [CChar]
 
+    /// The ICC profile to embed in the next compressed image, if any.
+    var iccProfile: [UInt8]?
+
+    /// The ICC profile found in the most recently decompressed image.
+    ///
+    /// Separate from ``iccProfile`` on purpose: one is a request and the other
+    /// is a finding, and a handle used for both compression and decompression
+    /// would otherwise conflate them.
+    var decodedProfile: [UInt8]?
+
     /// The scaling factor decompression should apply, as a fraction.
     ///
     /// Stored rather than applied immediately because it takes effect at the
@@ -71,6 +81,8 @@ final class Instance {
         self.initType = initType
         self.apiVersion = apiVersion
         self.parameters = [:]
+        self.iccProfile = nil
+        self.decodedProfile = nil
         self.scalingFactor = (numerator: 1, denominator: 1)
         self.croppingRegion = nil
         self.errorCode = TJERR_WARNING.id
