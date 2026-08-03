@@ -22,7 +22,7 @@ extension JPEG.Table.Huffman {
         frequencies: [Int],
         target: Key,
         class: Class
-    ) throws -> Self {
+    ) throws(JPEG.Failure) -> Self {
         precondition(frequencies.count == 256)
 
         // Index 256 is the reserved symbol. It takes part in the construction
@@ -76,7 +76,7 @@ extension JPEG.Table.Huffman {
         var bits: [Int] = .init(repeating: 0, count: 33)
         for i: Int in 0 ... 256 where codesize[i] > 0 {
             guard codesize[i] <= 32 else {
-                throw JPEG.ParsingError.invalidHuffmanTable
+                throw .parsing(.invalidHuffmanTable)
             }
             bits[codesize[i]] += 1
         }
