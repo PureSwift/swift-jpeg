@@ -56,16 +56,24 @@ extension Instance {
             return self.fail("pitch \(pitch) is smaller than one row")
         }
 
+        // 16-bit samples exist only in the lossless process, so asking for
+        // them is asking for it whether or not the flag was set.
+        let lossless: Bool = self.parameter(TJPARAM_LOSSLESS) != 0 || precision == 16
+
         do {
             let layout: JPEG.Layout<JPEG.Common> = try .init(
                 format: gray
                     ? .y(1, precision: precision)
-                    : .ycc(1, 2, 3, precision: precision),
-                process: self.parameter(TJPARAM_PROGRESSIVE) != 0
-                    ? .progressive(coding: .huffman, differential: false)
-                    : precision == 8
-                        ? .baseline
-                        : .extended(coding: .huffman, differential: false),
+                    : lossless
+                        ? .rgb(82, 71, 66, precision: precision)
+                        : .ycc(1, 2, 3, precision: precision),
+                process: lossless
+                    ? .lossless(coding: .huffman, differential: false)
+                    : self.parameter(TJPARAM_PROGRESSIVE) != 0
+                        ? .progressive(coding: .huffman, differential: false)
+                        : precision == 8
+                            ? .baseline
+                            : .extended(coding: .huffman, differential: false),
                 width: .init(width),
                 height: .init(height),
                 sampling: gray
@@ -94,6 +102,13 @@ extension Instance {
                         values[(y * .init(width) + x) * planes] =
                             Swift.min(sample(pixel[0]), ceiling)
                         continue
+                    } else if lossless {
+                        // Channels pass through untouched, which is what makes
+                        // the round trip exact.
+                        let base: Int = (y * .init(width) + x) * planes
+                        values[base] = Swift.min(sample(pixel[format.red]), ceiling)
+                        values[base + 1] = Swift.min(sample(pixel[format.green]), ceiling)
+                        values[base + 2] = Swift.min(sample(pixel[format.blue]), ceiling)
                     } else {
                         let shift: Int = precision - 8
                         let color: JPEG.YCbCr = .init(
@@ -111,13 +126,21 @@ extension Instance {
                 }
             }
 
-            let image: JPEG.Data.Rectangular<JPEG.Common> = .init(layout: layout, values: values)
             var encoded: [UInt8] = []
-            try image.compress(
-                stream: &encoded,
-                quality: .init(self.parameter(TJPARAM_QUALITY, default: 95)),
-                progressive: self.parameter(TJPARAM_PROGRESSIVE) != 0
-            )
+            if lossless {
+                encoded = try self.compressLossless(
+                    values: values, width: .init(width), height: .init(height),
+                    precision: precision, gray: gray
+                )
+            } else {
+                let image: JPEG.Data.Rectangular<JPEG.Common> =
+                    .init(layout: layout, values: values)
+                try image.compress(
+                    stream: &encoded,
+                    quality: .init(self.parameter(TJPARAM_QUALITY, default: 95)),
+                    progressive: self.parameter(TJPARAM_PROGRESSIVE) != 0
+                )
+            }
 
             if self.parameter(TJPARAM_NOREALLOC) != 0, let destination = jpegBuf.pointee {
                 guard encoded.count <= jpegSize.pointee else {
@@ -186,6 +209,19 @@ extension Instance {
 
                     if format.isGray {
                         pixel[0] = store(image[x: x, y: y, 0])
+                        continue
+                    }
+
+                    if case .rgb = image.layout.format {
+                        // Stored as RGB, so the samples are already what the
+                        // caller wants at full width — no narrowing, no
+                        // transform, nothing lost.
+                        pixel[format.red] = store(image[x: x, y: y, 0])
+                        pixel[format.green] = store(image[x: x, y: y, 1])
+                        pixel[format.blue] = store(image[x: x, y: y, 2])
+                        if let alpha: Int = format.alpha {
+                            pixel[alpha] = store(UInt16((1 << precision) - 1))
+                        }
                         continue
                     }
 
@@ -268,9 +304,10 @@ public func tj3Compress16(
     guard let instance: Instance = Instance.borrow(handle) else {
         return -1
     }
-    return instance.fail(
-        "16-bit samples require the lossless process, which is not implemented; "
-            + "T.81 caps the DCT-based processes at 12 bits"
+    return instance.compress(
+        srcBuf, width: width, pitch: pitch, height: height, pixelFormat: pixelFormat,
+        precision: 16, jpegBuf: jpegBuf, jpegSize: jpegSize,
+        sample: { $0 }
     )
 }
 
@@ -286,8 +323,8 @@ public func tj3Decompress16(
     guard let instance: Instance = Instance.borrow(handle) else {
         return -1
     }
-    return instance.fail(
-        "16-bit samples require the lossless process, which is not implemented; "
-            + "T.81 caps the DCT-based processes at 12 bits"
+    return instance.decompress(
+        jpegBuf, jpegSize, dstBuf: dstBuf, pitch: pitch, pixelFormat: pixelFormat,
+        precision: 16, store: { $0 }
     )
 }
