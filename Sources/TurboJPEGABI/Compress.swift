@@ -1,11 +1,6 @@
 import CTurboJPEG
 import JPEG
 
-/// Pads `value` up to a multiple of `alignment`.
-private func pad(_ value: Int, to alignment: Int) -> Int {
-    (value + alignment - 1) / alignment * alignment
-}
-
 @c @implementation
 public func tj3JPEGBufSize(_ width: Int32, _ height: Int32, _ jpegSubsamp: Int32) -> Int {
     guard width >= 1, height >= 1, let sampling: Subsampling = .init(jpegSubsamp) else {
