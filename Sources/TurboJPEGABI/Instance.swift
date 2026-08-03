@@ -1,0 +1,114 @@
+import CTurboJPEG
+import JPEG
+
+/// What a `tjhandle` actually points at.
+///
+/// TurboJPEG's handle is `void *`, which is the property that makes this whole
+/// substitution possible: the caller never sees inside, so the engine is free
+/// to own its own data instead of reproducing a C struct layout. Contrast
+/// `jpeglib.h`, where callers read `cinfo.output_width` directly and there is no
+/// seam at all.
+///
+/// A handle is a retained reference to one of these. It is deliberately *not*
+/// thread safe, matching TurboJPEG: the documented contract is one handle per
+/// thread, and adding locking here would be slower and still not make the
+/// caller's usage correct.
+final class Instance {
+    /// What the handle was created for.
+    let initType: Int32
+
+    /// Parameter values set through `tj3Set`, keyed by `TJPARAM`.
+    ///
+    /// A dictionary rather than stored properties because the parameter space
+    /// is sparse, open-ended, and mostly untouched by any given caller —
+    /// `tj3Set` is a generic setter and modelling it generically keeps the
+    /// unimplemented parameters from silently reading as zero.
+    var parameters: [Int32: Int32]
+
+    /// The most recent error, as `tj3GetErrorCode` and `tj3GetErrorStr` report
+    /// it.
+    ///
+    /// Null-terminated, because `tj3GetErrorStr` hands the caller a `char *`
+    /// that must remain valid until the next call on the same handle. Storing
+    /// it here rather than building it on demand is what gives it that
+    /// lifetime.
+    var errorCode: Int32
+    var errorMessage: [CChar]
+
+    /// The buffer most recently returned to the caller, when this library
+    /// allocated it.
+    ///
+    /// Kept so that `tj3Free` can be pointed at memory Swift allocated. The
+    /// caller is entitled to free it themselves, which is why the allocation
+    /// goes through the same path `tj3Alloc` uses rather than through an
+    /// `Array`.
+    var owned: Set<UInt>
+
+    init(initType: Int32) {
+        self.initType = initType
+        self.parameters = [:]
+        self.errorCode = TJERR_WARNING.id
+        self.errorMessage = Instance.terminated("No error")
+        self.owned = []
+        self.clearError()
+    }
+
+    /// Converts a Swift string into the null-terminated form the C API returns.
+    static func terminated(_ message: String) -> [CChar] {
+        var bytes: [CChar] = message.utf8.map { CChar(bitPattern: $0) }
+        bytes.append(0)
+        return bytes
+    }
+
+    func clearError() {
+        self.errorCode = 0
+        self.errorMessage = Instance.terminated("No error")
+    }
+
+    /// Records a fatal error and returns the API's failure value.
+    ///
+    /// Every entry point funnels failures through here so that a caller who
+    /// checks only the return code and a caller who reads `tj3GetErrorStr` see
+    /// the same thing.
+    @discardableResult
+    func fail(_ message: String) -> Int32 {
+        self.errorCode = TJERR_FATAL.id
+        self.errorMessage = Instance.terminated(message)
+        return -1
+    }
+
+    /// Records a fatal error from a thrown engine error.
+    @discardableResult
+    func fail(_ error: any Error) -> Int32 {
+        if let error: any JPEG.Error = error as? any JPEG.Error {
+            return self.fail("\(type(of: error).namespace): \(error.message)")
+        } else {
+            return self.fail("\(error)")
+        }
+    }
+
+    /// Reads a parameter, falling back to the documented default.
+    func parameter(_ param: TJPARAM, default fallback: Int32 = 0) -> Int32 {
+        self.parameters[param.id] ?? fallback
+    }
+}
+
+extension Instance {
+    /// Recovers the instance a handle refers to, without changing its retain
+    /// count.
+    ///
+    /// Returns `nil` for a null handle, which every entry point must tolerate:
+    /// the C API's own error path hands back `NULL` from `tj3Init`, and callers
+    /// routinely pass it straight into the next call.
+    static func borrow(_ handle: tjhandle?) -> Instance? {
+        guard let handle: tjhandle = handle else {
+            return nil
+        }
+        return Unmanaged<Instance>.fromOpaque(handle).takeUnretainedValue()
+    }
+
+    /// Produces a handle owning one reference to this instance.
+    func handle() -> tjhandle {
+        Unmanaged.passRetained(self).toOpaque()
+    }
+}
