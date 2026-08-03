@@ -195,9 +195,40 @@ the factored inverse and forward transforms, which need 11 multiplies per
 that no longer performs two integer divisions per output sample to discover that
 it is averaging a single one.
 
-The remaining gap is mostly SIMD. libjpeg-turbo hand-writes assembly for the
-transforms, the colour conversion and the upsampler; the code here is scalar.
-Closing it means writing those, not tidying what exists.
+The remaining gap is mostly SIMD, and part of it is now closed. `JPEG.Kernel`
+is a seam of function pointers that default to the portable Swift kernels; the
+`JPEGAccelerate` module detects the processor with `cpuid` and replaces the ones
+it has a faster path for. The C ABI installs them when it creates its first
+handle, so the shared library is as fast as the machine allows without being
+asked; the Swift package leaves the choice to the caller, who may prefer the
+engine's discipline to the import.
+
+| | portable | avx2 |
+| --- | --- | --- |
+| inverse transform | 0.0110 s | 0.0063 s |
+| forward transform + quantize | 0.0197 s | 0.0152 s |
+| decode, end to end | 0.0446 s | 0.0395 s |
+| encode, end to end | 0.0625 s | 0.0572 s |
+
+The kernels are about 1.75× on the transforms themselves, which is 8–11% end to
+end because the transforms are a quarter of the pipeline. They are bit-exact
+against the portable ones over 8192 blocks in both directions — exact, not
+within a count, because both run the same factorization with the same constants,
+so any disagreement at all would mean a lane is being computed differently
+rather than rounded differently.
+
+They are written as C intrinsics with a function-level `target` attribute rather
+than as assembly or a separately-flagged compilation unit. The attribute is what
+makes runtime dispatch possible without either: the file compiles for the
+baseline, the two kernels compile for AVX2, and nothing calls them unless `cpuid`
+says it may. Building the whole library for AVX2 would need per-target compiler
+flags, which in SwiftPM means `unsafeFlags`, which would stop the package being
+usable as a dependency at all. The `xgetbv` check alongside `cpuid` is not
+pedantry: a processor can report AVX2 while the operating system does not
+preserve the wide registers across a context switch.
+
+Still scalar: the upsampler, the colour conversion and the subsampler. The
+entropy coders do not vectorize — they are inherently serial.
 
 Everything above was done because a measurement pointed at it. Several things
 that looked like they should help did not, and were reverted rather than kept:
