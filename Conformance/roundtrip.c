@@ -115,17 +115,24 @@ int main(void)
     check(strlen(tj3GetErrorStr(decompressor)) > 0, "an error message is set");
     check(tj3GetErrorCode(decompressor) == TJERR_FATAL, "the error code is fatal");
 
-    printf("unimplemented entry points\n");
-    /* These are published but stubbed. They must fail through the API's own
-     * convention rather than crash or return something plausible.
-     *
-     * Which symbols belong here changes as the library grows — tjInitCompress
-     * was checked here until it was implemented, and this list shrinking is the
-     * point rather than a maintenance burden. */
-    check(tj3SetScalingFactor(decompressor, TJUNSCALED) == -1,
-          "the unimplemented tj3SetScalingFactor reports failure");
-    check(tj3Compress12(decompressor, NULL, 0, 0, 0, 0, NULL, NULL) == -1,
-          "the unimplemented 12-bit path reports failure");
+    printf("no entry point is a stub\n");
+    /* Every published symbol now has a real implementation, so this section no
+     * longer names any. What it checks instead is that the ones which used to
+     * be stubs do actual work rather than returning the failure value a stub
+     * returned — a stub for each of these would still link and still pass a
+     * check that only looked for -1. */
+    tjscalingfactor half = { 1, 2 };
+    check(tj3SetScalingFactor(decompressor, half) == 0, "tj3SetScalingFactor accepts 1/2");
+    tjscalingfactor unscaled = { 1, 1 };
+    tj3SetScalingFactor(decompressor, unscaled);
+
+    tjtransform identity;
+    memset(&identity, 0, sizeof identity);
+    identity.op = TJXOP_ROT90;
+    check(tj3TransformBufSize(decompressor, &identity) > 0,
+          "tj3TransformBufSize returns a real bound");
+    check(TJBUFSIZE(width, height) > 0, "the 1.0 TJBUFSIZE returns a real bound");
+    check(tjPlaneWidth(1, 128, TJSAMP_420) == 64, "tjPlaneWidth computes real geometry");
 
     tj3Free(jpeg);
     tj3Destroy(compressor);
