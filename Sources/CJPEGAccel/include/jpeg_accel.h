@@ -26,16 +26,25 @@ int jpeg_accel_avx2_available(void);
 
 /* Nullability is annotated so these import into Swift as non-optional
  * pointers, which is what lets them be assigned to the engine's dispatch seam
- * directly rather than through a wrapper that exists only to unwrap. */
+ * directly rather than through a wrapper that exists only to unwrap.
+ *
+ * The annotation is a Clang extension. SwiftPM always compiles this with
+ * Clang, but the CMake build may be using GCC, so it has to degrade to nothing
+ * rather than fail to parse. */
+#if defined(__clang__)
+#define JPEG_NONNULL _Nonnull
+#else
+#define JPEG_NONNULL
+#endif
 
 /* 64 dequantized coefficients, row-major, to 64 samples, row-major. */
-void jpeg_accel_idct8_avx2(const int32_t *_Nonnull coefficients,
+void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
                            int32_t precision,
-                           uint16_t *_Nonnull samples);
+                           uint16_t *JPEG_NONNULL samples);
 
 /* 64 samples, row-major, to 64 coefficients, row-major. */
-void jpeg_accel_fdct8_avx2(const uint16_t *_Nonnull samples,
+void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
                            int32_t precision,
-                           int32_t *_Nonnull coefficients);
+                           int32_t *JPEG_NONNULL coefficients);
 
 #endif
