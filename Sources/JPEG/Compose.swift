@@ -93,30 +93,57 @@ extension JPEG.Data.Rectangular {
                 // beyond it repeat the edge.
                 let extent: (x: Int, y: Int) = self.layout.samples(plane: plane)
 
-                for y: Int in 0 ..< output.size.y {
-                    let row: Int = Swift.min(y, extent.y - 1)
-                    let y0: Int = row * scale.y / sampling.y
-                    let y1: Int = Swift.max(y0 + 1, (row + 1) * scale.y / sampling.y)
+                // The horizontal box for each output column, and the clamped
+                // source index of each sample in it. Both depend only on x, and
+                // computing them per pixel meant two integer divisions and a
+                // clamp for every sample of every plane — on a megapixel image
+                // that was the dominant cost of the whole encoder.
+                let size: (x: Int, y: Int) = output.size
+                var spans: [(start: Int, end: Int)] = []
+                spans.reserveCapacity(size.x)
+                for x: Int in 0 ..< size.x {
+                    let column: Int = Swift.min(x, extent.x - 1)
+                    let x0: Int = column * scale.x / sampling.x
+                    let x1: Int = Swift.max(x0 + 1, (column + 1) * scale.x / sampling.x)
+                    spans.append((
+                        start: Swift.min(x0, self.width - 1),
+                        end: Swift.min(Swift.max(x1, x0 + 1), self.width)
+                    ))
+                }
 
-                    for x: Int in 0 ..< output.size.x {
-                        let column: Int = Swift.min(x, extent.x - 1)
-                        let x0: Int = column * scale.x / sampling.x
-                        let x1: Int = Swift.max(x0 + 1, (column + 1) * scale.x / sampling.x)
+                self.values.withUnsafeBufferPointer { values in
+                    output.withMutableSamples { samples in
+                        for y: Int in 0 ..< size.y {
+                            let row: Int = Swift.min(y, extent.y - 1)
+                            let y0: Int = Swift.min(
+                                row * scale.y / sampling.y, self.height - 1
+                            )
+                            let y1: Int = Swift.min(
+                                Swift.max((row + 1) * scale.y / sampling.y, y0 + 1),
+                                self.height
+                            )
 
-                        var total: Int = 0
-                        var count: Int = 0
-                        for sy: Int in y0 ..< y1 {
-                            let sy: Int = Swift.min(sy, self.height - 1)
-                            for sx: Int in x0 ..< x1 {
-                                let sx: Int = Swift.min(sx, self.width - 1)
-                                total += .init(self.values[(sy * self.width + sx) * stride + plane])
-                                count += 1
+                            let base: Int = y * size.x
+                            for x: Int in 0 ..< size.x {
+                                let span: (start: Int, end: Int) = spans[x]
+
+                                var total: Int = 0
+                                var count: Int = 0
+                                for sy: Int in y0 ..< y1 {
+                                    let offset: Int = sy * self.width
+                                    for sx: Int in span.start ..< span.end {
+                                        total += .init(
+                                            values[(offset + sx) * stride + plane]
+                                        )
+                                        count += 1
+                                    }
+                                }
+
+                                samples[base + x] = .init(
+                                    truncatingIfNeeded: (total + count / 2) / count
+                                )
                             }
                         }
-
-                        output[x: x, y: y] = .init(
-                            truncatingIfNeeded: (total + count / 2) / Swift.max(count, 1)
-                        )
                     }
                 }
 
