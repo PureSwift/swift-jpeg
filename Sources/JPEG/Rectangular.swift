@@ -135,31 +135,47 @@ extension JPEG.Data.Planar {
             let sampling: JPEG.Component.Sampling = component.sampling
             let source: Plane = self.planes[plane]
 
+            let extent: (x: Int, y: Int) = source.size
+
             guard sampling.x != scale.x || sampling.y != scale.y else {
                 // Full resolution. Interpolating would be a no-op in exact
                 // arithmetic but not in fixed point, so take the direct path
-                // and keep the samples bit-exact.
-                for y: Int in 0 ..< height {
-                    for x: Int in 0 ..< width {
-                        values[(y * width + x) * stride + plane] = source[x: x, y: y]
+                // and keep the samples bit-exact. This is the luma plane of
+                // every subsampled image, so it is a million samples on a
+                // megapixel image and worth writing through a raw pointer.
+                source.withSamples { samples in
+                    values.withUnsafeMutableBufferPointer { values in
+                        for y: Int in 0 ..< height {
+                            var output: Int = y * width * stride + plane
+                            let input: Int = y * extent.x
+                            for x: Int in 0 ..< width {
+                                values[output] = samples[input + x]
+                                output += stride
+                            }
+                        }
                     }
                 }
                 continue
             }
 
             // Column coordinates repeat on every row, so they are computed
-            // once for the plane rather than a million times.
-            var columns: [Int] = .init(repeating: 0, count: width)
+            // once for the plane rather than a million times — and clamped
+            // here too, since the clamp also depends only on x.
+            var lefts: [Int] = .init(repeating: 0, count: width)
+            var rights: [Int] = .init(repeating: 0, count: width)
             var fractions: [Int32] = .init(repeating: 0, count: width)
             for x: Int in 0 ..< width {
                 let u: Int = Self.source(x, sampling.x, scale.x)
-                columns[x] = u >> 16
-                fractions[x] = .init(u - (columns[x] << 16))
+                let column: Int = u >> 16
+                lefts[x] = Swift.min(Swift.max(column, 0), extent.x - 1)
+                rights[x] = Swift.min(Swift.max(column + 1, 0), extent.x - 1)
+                fractions[x] = .init(u - (column << 16))
             }
-
-            let extent: (x: Int, y: Int) = source.size
             source.withSamples { samples in
-                values.withUnsafeMutableBufferPointer { values in
+              values.withUnsafeMutableBufferPointer { values in
+                lefts.withUnsafeBufferPointer { lefts in
+                  rights.withUnsafeBufferPointer { rights in
+                    fractions.withUnsafeBufferPointer { fractions in
                     for y: Int in 0 ..< height {
                         let v: Int = Self.source(y, sampling.y, scale.y)
                         // Arithmetic shift floors, including for the negative
@@ -173,11 +189,11 @@ extension JPEG.Data.Planar {
                         let above: Int = Swift.min(Swift.max(row, 0), extent.y - 1) * extent.x
                         let below: Int = Swift.min(Swift.max(row + 1, 0), extent.y - 1) * extent.x
 
+                        var output: Int = y * width * stride + plane
                         for x: Int in 0 ..< width {
-                            let column: Int = columns[x]
+                            let left: Int = lefts[x]
+                            let right: Int = rights[x]
                             let fx: Int32 = fractions[x]
-                            let left: Int = Swift.min(Swift.max(column, 0), extent.x - 1)
-                            let right: Int = Swift.min(Swift.max(column + 1, 0), extent.x - 1)
 
                             // 32-bit intermediates: a sample is at most 16 bits
                             // and a fraction at most 16, so the products fit
@@ -193,10 +209,14 @@ extension JPEG.Data.Planar {
                             let value: Int32 =
                                 ((top << 8) + ((bottom - top) * fy >> 8) + (1 << 15)) >> 16
 
-                            values[(y * width + x) * stride + plane] = .init(value)
+                            values[output] = .init(value)
+                            output += stride
                         }
                     }
+                    }
+                  }
                 }
+              }
             }
         }
 
