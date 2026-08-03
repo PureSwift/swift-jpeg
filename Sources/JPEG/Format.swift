@@ -294,18 +294,55 @@ extension JPEG.YCbCr: JPEG.Color {
 
 extension JPEG.RGB: JPEG.Color {
     public static func unpack(_ interleaved: [UInt16], of format: JPEG.Common) -> [Self] {
-        // An RGB format needs no conversion at all, and going through YCbCr
-        // would cost the exactness that format exists to preserve.
-        guard case .rgb(_, _, _, precision: let precision) = format else {
+        let scale: Int = format.precision - 8
+
+        switch format {
+        case .rgb:
+            // An RGB format needs no conversion at all, and going through
+            // YCbCr would cost the exactness that format exists to preserve.
+            return Self.convert(interleaved, scale: scale) {
+                .init($0, $1, $2)
+            }
+
+        case .ycc:
+            // Fused. Converting via `JPEG.YCbCr.unpack` first would be the same
+            // arithmetic, but it would materialize a whole second image between
+            // the two steps — on a megapixel that is a megapixel of allocation
+            // and a second pass over it, for nothing.
+            return Self.convert(interleaved, scale: scale) {
+                JPEG.YCbCr(y: $0, cb: $1, cr: $2).rgb
+            }
+
+        case .y, .nonconforming:
+            // One meaningful component. Rare, and the general path already
+            // handles the component-count bookkeeping.
             return JPEG.YCbCr.unpack(interleaved, of: format).map(\.rgb)
         }
-        let scale: Int = precision - 8
-        return stride(from: 0, to: interleaved.count - 2, by: 3).map {
-            .init(
-                JPEG.YCbCr.narrow(interleaved[$0], by: scale),
-                JPEG.YCbCr.narrow(interleaved[$0 + 1], by: scale),
-                JPEG.YCbCr.narrow(interleaved[$0 + 2], by: scale)
-            )
+    }
+
+    /// Walks three-component interleaved samples, narrowing each triple to 8
+    /// bits and handing it to `transform`.
+    ///
+    /// Writes into uninitialized storage, since every element is assigned
+    /// exactly once and zeroing the buffer first would be a wasted pass.
+    private static func convert(
+        _ interleaved: [UInt16],
+        scale: Int,
+        _ transform: (UInt8, UInt8, UInt8) -> Self
+    ) -> [Self] {
+        let count: Int = interleaved.count / 3
+        return .init(unsafeUninitializedCapacity: count) { output, initialized in
+            interleaved.withUnsafeBufferPointer { input in
+                for i: Int in 0 ..< count {
+                    let base: Int = 3 * i
+                    output[i] = transform(
+                        JPEG.YCbCr.narrow(input[base], by: scale),
+                        JPEG.YCbCr.narrow(input[base + 1], by: scale),
+                        JPEG.YCbCr.narrow(input[base + 2], by: scale)
+                    )
+                }
+            }
+            initialized = count
         }
     }
 }
