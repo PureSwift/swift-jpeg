@@ -9,6 +9,10 @@ let package = Package(
             targets: ["JPEG"]
         ),
         .library(
+            name: "JPEGAccelerate",
+            targets: ["JPEGAccelerate"]
+        ),
+        .library(
             name: "TurboJPEGABI",
             type: .dynamic,
             targets: ["TurboJPEGABI"]
@@ -31,18 +35,38 @@ let package = Package(
             exclude: ["LICENSE"]
         ),
 
+        // Runtime processor feature detection. C because Swift has neither
+        // inline assembly nor a cpuid intrinsic.
+        .target(name: "CCPUFeatures"),
+
+        // Accelerated kernels, selected at run time. Compiled for the baseline;
+        // only the individual kernels carry a target attribute, so this builds
+        // and runs anywhere and uses AVX2 only where cpuid permits.
+        .target(
+            name: "CJPEGAccel",
+            dependencies: ["CCPUFeatures"]
+        ),
+
+        // Installs the accelerated kernels into the engine's dispatch seam.
+        // Separate from the engine because it imports things and the engine
+        // must not.
+        .target(
+            name: "JPEGAccelerate",
+            dependencies: ["JPEG", "CJPEGAccel", "CCPUFeatures"]
+        ),
+
         // The C ABI boundary. Depends on the engine; the engine knows nothing
         // about it, which is the point.
         .target(
             name: "TurboJPEGABI",
-            dependencies: ["JPEG", "CTurboJPEG"]
+            dependencies: ["JPEG", "CTurboJPEG", "JPEGAccelerate"]
         ),
 
         // Tests may import Foundation freely — the no-imports rule applies to
         // the engine, not to what exercises it.
         .testTarget(
             name: "JPEGTests",
-            dependencies: ["JPEG"],
+            dependencies: ["JPEG", "JPEGAccelerate"],
             resources: [.copy("Images")]
         ),
     ]
