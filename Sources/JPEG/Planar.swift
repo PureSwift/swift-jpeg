@@ -23,6 +23,29 @@ extension JPEG.Data {
                 self.buffer = .init(repeating: 0, count: size.x * size.y)
             }
 
+            /// Runs `body` on this plane's samples, row-major.
+            func withSamples<T>(_ body: (UnsafeBufferPointer<UInt16>) -> T) -> T {
+                self.buffer.withUnsafeBufferPointer(body)
+            }
+
+            /// Copies an `n`×`n` block of samples in at `(x, y)`.
+            ///
+            /// A block at a time rather than a sample at a time, so the bounds
+            /// check and the row offset are computed once per row instead of
+            /// once per sample.
+            mutating func write(
+                block: UnsafeMutableBufferPointer<UInt16>, x: Int, y: Int, size n: Int
+            ) {
+                self.buffer.withUnsafeMutableBufferPointer { destination in
+                    for row: Int in 0 ..< n where y + row < self.size.y {
+                        let base: Int = (y + row) * self.size.x + x
+                        for column: Int in 0 ..< n where x + column < self.size.x {
+                            destination[base + column] = block[row * n + column]
+                        }
+                    }
+                }
+            }
+
             /// Accesses the sample at `(x, y)`.
             ///
             /// Reads outside the plane clamp to the edge, which is what
@@ -128,15 +151,23 @@ extension JPEG.Data.Spectral {
                 return output
             }
 
-            for by: Int in 0 ..< plane.blocks.y {
-                for bx: Int in 0 ..< plane.blocks.x {
-                    let samples: [UInt16] = JPEG.IDCT.transform(
-                        JPEG.IDCT.dequantize(plane.block(x: bx, y: by), by: table),
-                        precision: precision,
-                        size: n
-                    )
-                    for i: Int in 0 ..< n * n {
-                        output[x: bx * n + i % n, y: by * n + i / n] = samples[i]
+            // Two scratch blocks for the whole plane rather than four heap
+            // allocations per block. On a megapixel image that is the
+            // difference between a hundred thousand allocations and none.
+            withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { coefficients in
+                withUnsafeTemporaryAllocation(of: UInt16.self, capacity: 64) { samples in
+                    for by: Int in 0 ..< plane.blocks.y {
+                        for bx: Int in 0 ..< plane.blocks.x {
+                            plane.withBlock(x: bx, y: by) { levels in
+                                for z: Int in 0 ..< 64 {
+                                    coefficients[z] = .init(levels[z]) * .init(table[z: z])
+                                }
+                            }
+                            JPEG.IDCT.transform(
+                                .init(coefficients), precision: precision, size: n, into: samples
+                            )
+                            output.write(block: samples, x: bx * n, y: by * n, size: n)
+                        }
                     }
                 }
             }
