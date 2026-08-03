@@ -59,7 +59,7 @@ extension JPEG {
         mutating func flush(
             to bits: inout JPEG.BitstreamWriter,
             using encoder: JPEG.Table.Huffman.Encoder
-        ) throws {
+        ) throws(JPEG.Failure) {
             guard self.eobrun > 0 else {
                 return
             }
@@ -105,7 +105,7 @@ extension JPEG.Data.Spectral {
         to bits: inout JPEG.BitstreamWriter,
         predictor: inout Int32,
         approximation: Int
-    ) throws {
+    ) throws(JPEG.Failure) {
         let value: Int32 =
             .init(self.planes[plane][x: block.x, y: block.y, z: 0]) >> Int32(approximation)
         let difference: Int = .init(value - predictor)
@@ -114,7 +114,7 @@ extension JPEG.Data.Spectral {
         let amplitude: (category: Int, bits: UInt16) =
             JPEG.BitstreamWriter.amplitude(of: difference)
         guard amplitude.category <= 15 else {
-            throw JPEG.EncodingError.coefficientOutOfRange(difference)
+            throw .encoding(.coefficientOutOfRange(difference))
         }
         try encoder.encode(.init(truncatingIfNeeded: amplitude.category), to: &bits)
         bits.write(amplitude.bits, count: amplitude.category)
@@ -143,7 +143,7 @@ extension JPEG.Data.Spectral {
         band: Range<Int>,
         approximation: Int,
         progression: inout JPEG.Progression
-    ) throws {
+    ) throws(JPEG.Failure) {
         var run: Int = 0
         for k: Int in band {
             let coefficient: Int = .init(
@@ -172,7 +172,7 @@ extension JPEG.Data.Spectral {
             let amplitude: (category: Int, bits: UInt16) =
                 JPEG.BitstreamWriter.amplitude(of: value)
             guard amplitude.category <= 15 else {
-                throw JPEG.EncodingError.coefficientOutOfRange(value)
+                throw .encoding(.coefficientOutOfRange(value))
             }
             try encoder.encode(
                 .init(truncatingIfNeeded: run << 4 | amplitude.category), to: &bits
@@ -210,7 +210,7 @@ extension JPEG.Data.Spectral {
         band: Range<Int>,
         approximation: Int,
         progression: inout JPEG.Progression
-    ) throws {
+    ) throws(JPEG.Failure) {
         // The magnitudes at this bit position, and where the last newly nonzero
         // coefficient sits. Everything past that point is either zero or a
         // correction, which is what lets the tail fold into an end-of-band run.
