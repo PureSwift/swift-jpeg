@@ -196,10 +196,14 @@ extension JPEG.Data.Spectral {
     ///     -   tables: The Huffman tables to code with. Every slot the scan
     ///         names must be present.
     ///     -   restartInterval: MCUs between restart markers, or 0 for none.
+    ///     -   metadata: Extra segments to write after the JFIF header, in
+    ///         order. Application segments carrying an ICC profile or EXIF
+    ///         block go here; the codec neither reads nor validates them.
     public func compress<Destination>(
         stream: inout Destination,
         tables: JPEG.Tables,
-        restartInterval: Int = 0
+        restartInterval: Int = 0,
+        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let frame: JPEG.Header.Frame = try self.frame()
         let scan: JPEG.Header.Scan = self.scan()
@@ -223,6 +227,10 @@ extension JPEG.Data.Spectral {
                 0x00, 0x00,                     // no thumbnail
             ]
         )
+
+        for segment: (marker: JPEG.Marker, body: [UInt8]) in metadata {
+            try stream.format(marker: segment.marker, body: segment.body)
+        }
 
         // Quantization tables must precede the frame header that references
         // them, and Huffman tables the scan that does.
@@ -273,7 +281,8 @@ extension JPEG.Data.Planar {
     public func compress<Destination>(
         stream: inout Destination,
         quality: Int = 85,
-        restartInterval: Int = 0
+        restartInterval: Int = 0,
+        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
@@ -305,7 +314,8 @@ extension JPEG.Data.Planar {
         try self.transformed(quanta: quanta).compress(
             stream: &stream,
             tables: tables,
-            restartInterval: restartInterval
+            restartInterval: restartInterval,
+            metadata: metadata
         )
     }
 }
@@ -323,7 +333,8 @@ extension JPEG.Data.Rectangular {
     public func compress<Destination>(
         stream: inout Destination,
         quality: Int = 85,
-        restartInterval: Int = 0
+        restartInterval: Int = 0,
+        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
@@ -369,7 +380,8 @@ extension JPEG.Data.Rectangular {
         try source.spectral(quanta: quanta).compress(
             stream: &stream,
             tables: tables,
-            restartInterval: restartInterval
+            restartInterval: restartInterval,
+            metadata: metadata
         )
     }
 }
