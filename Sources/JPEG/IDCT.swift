@@ -122,7 +122,9 @@ extension JPEG.IDCT {
         // enough that writing seven more of them would be seven more chances to
         // be subtly wrong for no measurable gain.
         if n == 8 {
-            Self.transform8(coefficients, precision: precision, into: samples)
+            JPEG.Kernel.inverseTransform(
+                coefficients.baseAddress!, .init(precision), samples.baseAddress!
+            )
             return
         }
 
