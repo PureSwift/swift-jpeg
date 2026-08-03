@@ -207,9 +207,9 @@ extension JPEG.Data.Spectral {
     ) throws where Destination: JPEG.Bytestream.Destination {
         let frame: JPEG.Header.Frame = try self.frame()
         let scan: JPEG.Header.Scan = self.scan()
-        let coded: (tables: JPEG.Tables, ecs: [UInt8]) = try self.coded(
-            given: tables, scan: scan, restartInterval: restartInterval
-        )
+        let coded: (tables: JPEG.Tables, ecs: [UInt8]) = self.layout.process.isProgressive
+            ? (tables, [])
+            : try self.coded(given: tables, scan: scan, restartInterval: restartInterval)
         let tables: JPEG.Tables = coded.tables
 
         try stream.format(marker: .start)
@@ -243,6 +243,16 @@ extension JPEG.Data.Spectral {
 
         try stream.format(marker: .frame(self.layout.process), body: frame.serialized())
 
+        guard !self.layout.process.isProgressive else {
+            // A progressive image is many scans, each with its own tables, so
+            // the single-scan tail below does not apply.
+            try self.compress(
+                progressive: &stream, restartInterval: restartInterval
+            )
+            try stream.format(marker: .end)
+            return
+        }
+
         for table: JPEG.Table.Huffman in tables.dc.values.sorted(by: { $0.target < $1.target })
             + tables.ac.values.sorted(by: { $0.target < $1.target })
         {
@@ -271,6 +281,52 @@ extension JPEG.Data.Spectral {
     }
 }
 
+extension JPEG.Data.Spectral {
+    /// Writes the scans of a progressive image.
+    ///
+    /// Tables are emitted per scan rather than once up front, because each
+    /// scan's statistics are its own and a shared table would fit none of them.
+    /// Redefining a slot between scans is ordinary — that is what `DHT`
+    /// appearing more than once means.
+    func compress<Destination>(
+        progressive stream: inout Destination,
+        restartInterval: Int,
+        script: [JPEG.Header.Scan]? = nil
+    ) throws where Destination: JPEG.Bytestream.Destination {
+        if restartInterval > 0 {
+            try stream.format(
+                marker: .restartInterval,
+                body: [
+                    .init(truncatingIfNeeded: restartInterval >> 8),
+                    .init(truncatingIfNeeded: restartInterval),
+                ]
+            )
+        }
+
+        for scan: JPEG.Header.Scan in script ?? self.progression() {
+            let tables: JPEG.Tables = try self.tables(
+                for: scan, restartInterval: restartInterval
+            )
+
+            for table: JPEG.Table.Huffman
+                in tables.dc.values.sorted(by: { $0.target < $1.target })
+                    + tables.ac.values.sorted(by: { $0.target < $1.target })
+            {
+                try stream.format(marker: .huffman, body: table.serialized())
+            }
+
+            try stream.format(marker: .scan, body: scan.serialized())
+
+            let ecs: [UInt8] = try self.encode(
+                scan: scan, encoders: .init(tables), restartInterval: restartInterval
+            )
+            guard stream.write(ecs) != nil else {
+                throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
+            }
+        }
+    }
+}
+
 extension JPEG.Data.Planar {
     /// Encodes these planes as a baseline JPEG at the given quality.
     ///
@@ -282,15 +338,18 @@ extension JPEG.Data.Planar {
         stream: inout Destination,
         quality: Int = 85,
         restartInterval: Int = 0,
+        progressive: Bool = false,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
         // sequential process, which is the same coding under a different
         // start-of-frame marker.
-        let process: JPEG.Process = precision == 8
-            ? .baseline
-            : .extended(coding: .huffman, differential: false)
+        let process: JPEG.Process = progressive
+            ? .progressive(coding: .huffman, differential: false)
+            : precision == 8
+                ? .baseline
+                : .extended(coding: .huffman, differential: false)
         guard process.precisions.contains(precision) else {
             throw JPEG.EncodingError.unsupportedPrecision(precision)
         }
@@ -334,15 +393,18 @@ extension JPEG.Data.Rectangular {
         stream: inout Destination,
         quality: Int = 85,
         restartInterval: Int = 0,
+        progressive: Bool = false,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
         // sequential process, which is the same coding under a different
         // start-of-frame marker.
-        let process: JPEG.Process = precision == 8
-            ? .baseline
-            : .extended(coding: .huffman, differential: false)
+        let process: JPEG.Process = progressive
+            ? .progressive(coding: .huffman, differential: false)
+            : precision == 8
+                ? .baseline
+                : .extended(coding: .huffman, differential: false)
         guard process.precisions.contains(precision) else {
             throw JPEG.EncodingError.unsupportedPrecision(precision)
         }
