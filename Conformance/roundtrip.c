@@ -122,10 +122,10 @@ int main(void)
      * Which symbols belong here changes as the library grows — tjInitCompress
      * was checked here until it was implemented, and this list shrinking is the
      * point rather than a maintenance burden. */
-    check(tj3Transform(decompressor, jpeg, jpegSize, 0, NULL, NULL, NULL) == -1,
-          "tj3Transform reports failure");
-    check(tj3TransformBufSize(decompressor, NULL) == 0,
-          "the unimplemented tj3TransformBufSize returns 0");
+    check(tj3SetScalingFactor(decompressor, TJUNSCALED) == -1,
+          "the unimplemented tj3SetScalingFactor reports failure");
+    check(tj3Compress12(decompressor, NULL, 0, 0, 0, 0, NULL, NULL) == -1,
+          "the unimplemented 12-bit path reports failure");
 
     tj3Free(jpeg);
     tj3Destroy(compressor);
