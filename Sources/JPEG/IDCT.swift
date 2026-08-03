@@ -118,6 +118,14 @@ extension JPEG.IDCT {
         precondition(1 ... 8 ~= n)
         precondition(samples.count >= n * n)
 
+        // Full size has a factorization; the scaled sizes do not, and are rare
+        // enough that writing seven more of them would be seven more chances to
+        // be subtly wrong for no measurable gain.
+        if n == 8 {
+            Self.transform8(coefficients, precision: precision, into: samples)
+            return
+        }
+
         let basis: [[Int32]] = Self.scaledBasis[n]
         let shift: Int32 = 1 << Int32(precision - 1)
         let ceiling: Int32 = (1 << Int32(precision)) - 1
