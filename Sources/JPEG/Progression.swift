@@ -94,7 +94,7 @@ extension JPEG.Data.Spectral {
     /// statistics — so every scan gets its own.
     ///
     /// A DC refinement scan is not Huffman coded at all and needs none.
-    func tables(for scan: JPEG.Header.Scan, restartInterval: Int) throws -> JPEG.Tables {
+    func tables(for scan: JPEG.Header.Scan, restartInterval: Int) throws(JPEG.Failure) -> JPEG.Tables {
         let kind: JPEG.Header.Scan.Kind = scan.kind(process: self.layout.process)
         if case .dc(refining: true) = kind {
             return .init()
