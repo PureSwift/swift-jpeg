@@ -148,8 +148,8 @@ TARGET_AVX2 static inline void idct_pass(__m256i *d, int drop) {
 }
 
 TARGET_AVX2
-void jpeg_accel_idct8_avx2(const int32_t *_Nonnull coefficients,
-                           int32_t precision, uint16_t *_Nonnull samples) {
+void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
+                           int32_t precision, uint16_t *JPEG_NONNULL samples) {
     __m256i d[8];
     for (int i = 0; i < 8; i++) {
         d[i] = _mm256_loadu_si256((const __m256i *)(coefficients + i * 8));
@@ -243,8 +243,8 @@ TARGET_AVX2 static inline void fdct_pass(__m256i *d, int evenDrop, int oddDrop,
 }
 
 TARGET_AVX2
-void jpeg_accel_fdct8_avx2(const uint16_t *_Nonnull samples,
-                           int32_t precision, int32_t *_Nonnull coefficients) {
+void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
+                           int32_t precision, int32_t *JPEG_NONNULL coefficients) {
     const __m256i level = _mm256_set1_epi32(1 << (precision - 1));
 
     __m256i d[8];
@@ -270,13 +270,13 @@ void jpeg_accel_fdct8_avx2(const uint16_t *_Nonnull samples,
 
 #else
 
-void jpeg_accel_idct8_avx2(const int32_t *_Nonnull coefficients,
-                           int32_t precision, uint16_t *_Nonnull samples) {
+void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
+                           int32_t precision, uint16_t *JPEG_NONNULL samples) {
     (void)coefficients; (void)precision; (void)samples;
 }
 
-void jpeg_accel_fdct8_avx2(const uint16_t *_Nonnull samples,
-                           int32_t precision, int32_t *_Nonnull coefficients) {
+void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
+                           int32_t precision, int32_t *JPEG_NONNULL coefficients) {
     (void)samples; (void)precision; (void)coefficients;
 }
 
