@@ -11,7 +11,7 @@ extension JPEG {
         /// The coding process.
         public let process: JPEG.Process
         /// The image width, in samples.
-        public let width: Int
+        public internal(set) var width: Int
         /// The image height, in samples.
         ///
         /// Settable within the module because a stream may declare zero here
