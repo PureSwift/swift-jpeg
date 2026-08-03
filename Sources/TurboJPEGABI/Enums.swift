@@ -23,3 +23,9 @@ extension TJERR {
         .init(bitPattern: self.rawValue)
     }
 }
+
+extension TJXOP {
+    var id: Int32 {
+        .init(bitPattern: self.rawValue)
+    }
+}
