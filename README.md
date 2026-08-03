@@ -12,6 +12,7 @@ stock TurboJPEG header can link and use.
 
 | | |
 | --- | --- |
+| Arithmetic coding (encode + decode) | ✅ |
 | Lossless process (encode + decode) | ✅ |
 | Lossless cropping and custom filters | ✅ |
 | 16-bit precision | ✅ |
@@ -104,7 +105,13 @@ identifiers, rather than converting to YCbCr. That conversion is a fixed-point
 round trip costing about one count, which would make "lossless" untrue — the
 conformance program caught exactly that before the format existed.
 
-Entropy coding is Huffman throughout. The Annex K sample tables are used where
+Both entropy coders the standard defines are implemented. **Huffman** is the
+default and what everything in circulation uses. **Arithmetic coding** (Annex D)
+compresses about 10 percent better, and is supported in both directions —
+verified against a file libjpeg wrote, which is the only test that means
+anything for a coder whose encoder and decoder are written together.
+
+For Huffman, the Annex K sample tables are used where
 they suffice, since matching what every other encoder emits keeps output
 comparable — and minimum-redundancy tables built from the image's own symbol
 statistics where they do not. Which applies is decided by trial rather than by
