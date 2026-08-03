@@ -10,6 +10,12 @@ extension JPEG {
         public private(set) var tables: JPEG.Tables
         /// The quantization tables currently defined.
         public private(set) var quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization]
+        /// The arithmetic conditioning currently defined.
+        ///
+        /// Arithmetic coding has no code tables, but a `DAC` segment can still
+        /// adjust how it buckets its decisions. Most images never send one and
+        /// simply take the defaults.
+        public private(set) var conditioning: JPEG.Arithmetic.Conditioners
         /// MCUs between restart markers, or 0 if restarts are not in use.
         public private(set) var restartInterval: Int
         /// The frame header, once one has been seen.
@@ -20,6 +26,7 @@ extension JPEG {
         public init() {
             self.tables = .init()
             self.quanta = [:]
+            self.conditioning = .init()
             self.restartInterval = 0
             self.frame = nil
             self.spectral = nil
@@ -44,6 +51,16 @@ extension JPEG.Context {
     public mutating func push(huffman data: [UInt8]) throws {
         for table: JPEG.Table.Huffman in try JPEG.Table.Huffman.parse(data) {
             self.tables.push(table)
+        }
+    }
+
+    /// Applies a `DAC` segment.
+    public mutating func push(arithmetic data: [UInt8]) throws {
+        for entry in try JPEG.Arithmetic.Conditioners.parse(data) {
+            switch entry.class {
+            case .dc:   self.conditioning.dc[entry.target] = entry.conditioning
+            case .ac:   self.conditioning.ac[entry.target] = entry.conditioning
+            }
         }
     }
 
@@ -80,12 +97,23 @@ extension JPEG.Context {
         }
 
         let scan: JPEG.Header.Scan = try .parse(data, process: frame.process)
-        try self.spectral?.decode(
-            ecs,
-            scan: scan,
-            tables: self.tables,
-            restartInterval: self.restartInterval
-        )
+        // The two entropy coders share everything above this line and nothing
+        // below it.
+        if case .arithmetic = frame.process.coding {
+            try self.spectral?.decode(
+                arithmetic: ecs,
+                scan: scan,
+                conditioning: self.conditioning,
+                restartInterval: self.restartInterval
+            )
+        } else {
+            try self.spectral?.decode(
+                ecs,
+                scan: scan,
+                tables: self.tables,
+                restartInterval: self.restartInterval
+            )
+        }
     }
 }
 
@@ -136,6 +164,8 @@ extension JPEG.Data.Spectral {
                 try context.push(quantization: data)
             case .huffman:
                 try context.push(huffman: data)
+            case .arithmeticCodingCondition:
+                try context.push(arithmetic: data)
             case .restartInterval:
                 try context.push(restartInterval: data)
             case .height:
