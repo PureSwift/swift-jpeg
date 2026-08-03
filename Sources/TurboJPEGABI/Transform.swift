@@ -97,12 +97,6 @@ public func tj3Transform(
             guard let rotation: JPEG.Transform = .init(operation: transform.op) else {
                 return instance.fail("unknown transform operation \(transform.op)")
             }
-            if transform.options & TJXOPT_CROP != 0 {
-                return instance.fail("cropping is not implemented")
-            }
-            if transform.customFilter != nil {
-                return instance.fail("custom coefficient filters are not implemented")
-            }
             if transform.options & TJXOPT_GRAY != 0 {
                 return instance.fail("discarding chrominance is not implemented")
             }
@@ -124,12 +118,81 @@ public func tj3Transform(
             // source was sequential; the coefficients are the same either way.
             let progressive: Bool = transform.options & TJXOPT_PROGRESSIVE != 0
                 || instance.parameter(TJPARAM_PROGRESSIVE) != 0
+            // Cropping happens after the rotation, which is why the alignment
+            // requirement is stated against the *destination* — a quarter turn
+            // exchanges the two MCU dimensions along with everything else.
+            if transform.options & TJXOPT_CROP != 0 {
+                let region: (x: Int, y: Int, width: Int, height: Int) = (
+                    x: .init(transform.r.x),
+                    y: .init(transform.r.y),
+                    // Zero means "to the far edge", which is how a caller crops
+                    // only the near side.
+                    width: transform.r.w == 0
+                        ? transformed.layout.width - .init(transform.r.x)
+                        : .init(transform.r.w),
+                    height: transform.r.h == 0
+                        ? transformed.layout.height - .init(transform.r.y)
+                        : .init(transform.r.h)
+                )
+                guard
+                let cropped: JPEG.Data.Spectral<JPEG.Common> = transformed.cropped(to: region)
+                else {
+                    let mcu: (x: Int, y: Int) = (
+                        x: 8 * transformed.layout.scale.x,
+                        y: 8 * transformed.layout.scale.y
+                    )
+                    return instance.fail(
+                        "cropping region \(region.width)x\(region.height)"
+                            + "+\(region.x)+\(region.y) does not fit the "
+                            + "\(transformed.layout.width)x\(transformed.layout.height) "
+                            + "result, or its origin is not a multiple of the "
+                            + "\(mcu.x)x\(mcu.y) MCU"
+                    )
+                }
+                transformed = cropped
+            }
+
             if progressive,
                let recoded: JPEG.Data.Spectral<JPEG.Common> = transformed.reprocessed(
                    as: .progressive(coding: .huffman, differential: false)
                )
             {
                 transformed = recoded
+            }
+
+            // The filter sees the coefficients as they will be written: after
+            // the rotation and the crop, before any entropy coding.
+            if let filter = transform.customFilter {
+                var mutable: tjtransform = transform
+                for plane: Int in transformed.planes.indices {
+                    let blocks: (x: Int, y: Int) = transformed.planes[plane].blocks
+                    let plane32: Int32 = .init(plane)
+                    var region: tjregion = .init(
+                        x: 0, y: 0,
+                        w: .init(blocks.x * 8), h: 8
+                    )
+                    let extent: tjregion = .init(
+                        x: 0, y: 0,
+                        w: .init(blocks.x * 8), h: .init(blocks.y * 8)
+                    )
+
+                    for y: Int in 0 ..< blocks.y {
+                        // One call per block row, which is the granularity the
+                        // reference implementation uses and which the
+                        // documented contract allows an implementation to
+                        // choose.
+                        let status: Int32 = transformed.withBlockRow(plane: plane, y) {
+                            filter(
+                                $0.baseAddress, region, extent,
+                                plane32, .init(index), &mutable
+                            )
+                        }
+                        guard status == 0 else {
+                            return instance.fail("the custom filter reported an error")
+                        }
+                        region.y += 8
+                    }
+                }
             }
 
             // The tables come from the transformed image, not from a fresh set:
