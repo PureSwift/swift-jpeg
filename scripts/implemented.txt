@@ -20,3 +20,24 @@ tj3JPEGBufSize
 tj3Compress8
 tj3DecompressHeader
 tj3Decompress8
+
+# The 1.x and 2.x API, implemented as thin wrappers over the TJ3 entry points.
+tjInitCompress
+tjInitDecompress
+tjInitTransform
+tjDestroy
+tjAlloc
+tjFree
+tjGetErrorStr
+tjGetErrorStr2
+tjGetErrorCode
+tjBufSize
+tjPlaneWidth
+tjPlaneHeight
+tjCompress2
+tjDecompress2
+tjDecompressHeader
+tjDecompressHeader2
+tjDecompressHeader3
+tjGetScalingFactors
+tj3GetScalingFactors
