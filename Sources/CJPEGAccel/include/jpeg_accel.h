@@ -24,6 +24,14 @@
 /* Whether the running processor can execute the AVX2 kernels. */
 int jpeg_accel_avx2_available(void);
 
+/* Whether the running processor can execute the NEON kernels.
+ *
+ * NEON is mandatory on AArch64, so this is really asking whether the library
+ * was built for AArch64 at all. It is a function rather than a compile-time
+ * check so that the Swift side selects kernels the same way on every
+ * architecture. */
+int jpeg_accel_neon_available(void);
+
 /* Nullability is annotated so these import into Swift as non-optional
  * pointers, which is what lets them be assigned to the engine's dispatch seam
  * directly rather than through a wrapper that exists only to unwrap.
@@ -44,6 +52,15 @@ void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
 
 /* 64 samples, row-major, to 64 coefficients, row-major. */
 void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
+                           int32_t precision,
+                           int32_t *JPEG_NONNULL coefficients);
+
+/* The same two, for AArch64. */
+void jpeg_accel_idct8_neon(const int32_t *JPEG_NONNULL coefficients,
+                           int32_t precision,
+                           uint16_t *JPEG_NONNULL samples);
+
+void jpeg_accel_fdct8_neon(const uint16_t *JPEG_NONNULL samples,
                            int32_t precision,
                            int32_t *JPEG_NONNULL coefficients);
 
