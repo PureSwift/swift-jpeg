@@ -124,8 +124,8 @@ int main(void)
      * point rather than a maintenance burden. */
     check(tj3Transform(decompressor, jpeg, jpegSize, 0, NULL, NULL, NULL) == -1,
           "tj3Transform reports failure");
-    check(tjBufSizeYUV(width, height, TJSAMP_420) == 0,
-          "the unimplemented tjBufSizeYUV returns 0");
+    check(tj3TransformBufSize(decompressor, NULL) == 0,
+          "the unimplemented tj3TransformBufSize returns 0");
 
     tj3Free(jpeg);
     tj3Destroy(compressor);
