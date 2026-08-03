@@ -21,7 +21,7 @@ stock TurboJPEG header can link and use.
 | Baseline encoding | ✅ |
 | Progressive encoding | ❌ not yet |
 | JFIF / EXIF metadata | ❌ not yet |
-| TurboJPEG C ABI | ⚠️ 13 of 81 symbols; the rest stubbed |
+| TurboJPEG C ABI | ⚠️ 32 of 81 symbols; the rest stubbed |
 
 ## Requirements
 
@@ -98,15 +98,27 @@ target that depends on it.
 `TURBOJPEG_*` version nodes, exactly the 81 published symbols, and no Swift
 symbols leaked past the version script.
 
-Thirteen symbols are implemented — the TJ3 lifecycle, parameters, buffer sizing,
-and the 8-bit compress and decompress paths. The other 68 are generated C stubs
+Thirty-two symbols are implemented: the TJ3 lifecycle, parameters, buffer
+sizing, and the 8-bit compress and decompress paths, plus the whole 1.x/2.x
+compress and decompress surface. That last part matters more than its size
+suggests — most software linking TurboJPEG today was written against the old
+API, so implementing only TJ3 would make this a drop-in for nothing already
+installed. The other 49 are generated C stubs
 that return the failure value their signature documents, so the library loads
 and every entry point resolves; the unfinished ones fail like ordinary errors
 rather than crashing or returning something plausible. `scripts/implemented.txt`
 tracks which is which, and the split is enforced by the linker: listing a name
 early is a missing symbol, listing it late is a duplicate.
 
-Run `Conformance/run.sh` to build the library and exercise it from C.
+Run `Conformance/run.sh` to build the library and exercise it from C — one
+program for the TJ3 API, one for the legacy API. Point `LD_LIBRARY_PATH` at a
+real libjpeg-turbo instead and both should behave identically; that comparison
+is why they are C rather than more Swift tests.
+
+Not implemented, and refused rather than approximated: scaled decompression,
+the YUV-plane entry points, lossless transformation, and 12- or 16-bit
+precision. A request for any of them fails through the API's own error
+convention.
 
 TurboJPEG is a good substitution target where the libjpeg API is not. `tjhandle`
 is `void *`, so the handle is genuinely opaque and the engine can own its own
