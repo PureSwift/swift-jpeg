@@ -145,6 +145,25 @@ extension JPEG.YCbCr {
         static let crToG: Int32 = -46802
         /// 1.772
         static let cbToB: Int32 = 116130
+
+        /// 0.299
+        static let rToY: Int32 = 19595
+        /// 0.587
+        static let gToY: Int32 = 38470
+        /// 0.114
+        static let bToY: Int32 = 7471
+        /// -0.168736
+        static let rToCb: Int32 = -11059
+        /// -0.331264
+        static let gToCb: Int32 = -21709
+        /// 0.5
+        static let bToCb: Int32 = 32768
+        /// 0.5
+        static let rToCr: Int32 = 32768
+        /// -0.418688
+        static let gToCr: Int32 = -27439
+        /// -0.081312
+        static let bToCr: Int32 = -5329
     }
 
     /// Converts to RGB, clamping out-of-gamut results.
@@ -165,6 +184,31 @@ extension JPEG.YCbCr {
             JPEG.YCbCr.clamp(r >> 16),
             JPEG.YCbCr.clamp(g >> 16),
             JPEG.YCbCr.clamp(b >> 16)
+        )
+    }
+
+    /// Converts from RGB.
+    ///
+    /// The inverse of ``rgb``, using the same fixed-point scale. Chrominance is
+    /// biased by 128 so that the difference channels, which are naturally
+    /// signed, fit an unsigned byte — which is why a gray pixel comes out as
+    /// `(y, 128, 128)` rather than `(y, 0, 0)`.
+    ///
+    /// No clamping is needed in this direction: the RGB cube maps strictly
+    /// inside the YCbCr one, so every input is representable.
+    public init(_ rgb: JPEG.RGB) {
+        let r: Int32 = .init(rgb.r)
+        let g: Int32 = .init(rgb.g)
+        let b: Int32 = .init(rgb.b)
+
+        let y: Int32 = Fixed.rToY * r + Fixed.gToY * g + Fixed.bToY * b + Fixed.half
+        let cb: Int32 = Fixed.rToCb * r + Fixed.gToCb * g + Fixed.bToCb * b
+        let cr: Int32 = Fixed.rToCr * r + Fixed.gToCr * g + Fixed.bToCr * b
+
+        self.init(
+            y: JPEG.YCbCr.clamp(y >> 16),
+            cb: JPEG.YCbCr.clamp(((cb + Fixed.half) >> 16) + 128),
+            cr: JPEG.YCbCr.clamp(((cr + Fixed.half) >> 16) + 128)
         )
     }
 
