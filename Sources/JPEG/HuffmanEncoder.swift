@@ -67,7 +67,7 @@ extension JPEG.Table.Huffman.Encoder {
     /// as a corrupt image rather than as an error — which is exactly what
     /// happened here with 12-bit samples, whose magnitude categories run past
     /// the eleven the Annex K tables cover.
-    public func encode(_ symbol: UInt8, to bits: inout JPEG.BitstreamWriter) throws {
+    public func encode(_ symbol: UInt8, to bits: inout JPEG.BitstreamWriter) throws(JPEG.Failure) {
         if let counter: Counter = self.counter {
             counter.record(symbol)
             return
@@ -75,7 +75,7 @@ extension JPEG.Table.Huffman.Encoder {
 
         let index: Int = .init(symbol)
         guard self.lengths[index] > 0 else {
-            throw JPEG.EncodingError.unencodableSymbol(symbol)
+            throw .encoding(.unencodableSymbol(symbol))
         }
         bits.write(self.codes[index], count: self.lengths[index])
     }
