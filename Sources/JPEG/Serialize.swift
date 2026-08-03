@@ -219,7 +219,15 @@ extension JPEG.Data.Spectral {
     ) throws where Destination: JPEG.Bytestream.Destination {
         let frame: JPEG.Header.Frame = try self.frame()
         let scan: JPEG.Header.Scan = self.scan()
-        let coded: (tables: JPEG.Tables, ecs: [UInt8]) = self.layout.process.isProgressive
+        // Neither a progressive image nor an arithmetic one is coded by the
+        // single-scan Huffman path below, so neither pays for its trial encode.
+        let deferred: Bool
+        if case .arithmetic = self.layout.process.coding {
+            deferred = true
+        } else {
+            deferred = self.layout.process.isProgressive
+        }
+        let coded: (tables: JPEG.Tables, ecs: [UInt8]) = deferred
             ? (tables, [])
             : try self.coded(given: tables, scan: scan, restartInterval: restartInterval)
         let tables: JPEG.Tables = coded.tables
@@ -254,6 +262,20 @@ extension JPEG.Data.Spectral {
         }
 
         try stream.format(marker: .frame(self.layout.process), body: frame.serialized())
+
+        if case .arithmetic = self.layout.process.coding {
+            // No Huffman tables, and no DAC segment either: this library codes
+            // with the defaults, and a segment restating them would be noise.
+            try stream.format(marker: .scan, body: scan.serialized(process: self.layout.process))
+            let ecs: [UInt8] = try self.encode(
+                arithmetic: scan, conditioning: .init(), restartInterval: restartInterval
+            )
+            guard stream.write(ecs) != nil else {
+                throw JPEG.EncodingError.unsupportedProcess(self.layout.process)
+            }
+            try stream.format(marker: .end)
+            return
+        }
 
         guard !self.layout.process.isProgressive else {
             // A progressive image is many scans, each with its own tables, so
@@ -351,17 +373,19 @@ extension JPEG.Data.Planar {
         quality: Int = 85,
         restartInterval: Int = 0,
         progressive: Bool = false,
+        arithmetic: Bool = false,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
         // sequential process, which is the same coding under a different
         // start-of-frame marker.
+        let coding: JPEG.Coding = arithmetic ? .arithmetic : .huffman
         let process: JPEG.Process = progressive
-            ? .progressive(coding: .huffman, differential: false)
-            : precision == 8
+            ? .progressive(coding: coding, differential: false)
+            : precision == 8 && !arithmetic
                 ? .baseline
-                : .extended(coding: .huffman, differential: false)
+                : .extended(coding: coding, differential: false)
         guard process.precisions.contains(precision) else {
             throw JPEG.EncodingError.unsupportedPrecision(precision)
         }
@@ -406,17 +430,19 @@ extension JPEG.Data.Rectangular {
         quality: Int = 85,
         restartInterval: Int = 0,
         progressive: Bool = false,
+        arithmetic: Bool = false,
         metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
     ) throws where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
         // sequential process, which is the same coding under a different
         // start-of-frame marker.
+        let coding: JPEG.Coding = arithmetic ? .arithmetic : .huffman
         let process: JPEG.Process = progressive
-            ? .progressive(coding: .huffman, differential: false)
-            : precision == 8
+            ? .progressive(coding: coding, differential: false)
+            : precision == 8 && !arithmetic
                 ? .baseline
-                : .extended(coding: .huffman, differential: false)
+                : .extended(coding: coding, differential: false)
         guard process.precisions.contains(precision) else {
             throw JPEG.EncodingError.unsupportedPrecision(precision)
         }
