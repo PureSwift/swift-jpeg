@@ -23,7 +23,7 @@ cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build"
 
 status=0
-for program in roundtrip legacy; do
+for program in roundtrip legacy yuv; do
     cc -std=c99 -Wall -Wextra \
         -I "$root/Sources/CTurboJPEG/include" \
         -o "$build/$program" "$root/Conformance/$program.c" \
