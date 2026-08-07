@@ -111,6 +111,27 @@ extension JPEG.Data.Rectangular {
                     ))
                 }
 
+                // The leading run of columns whose boxes are all the same width
+                // and advance by that width. Everything after it is the
+                // narrower boxes at the right edge, where the last one would
+                // otherwise run off the image, plus the block padding that
+                // repeats them.
+                //
+                // Knowing that run lets the two box shapes every real image
+                // uses be written out as straight-line code. The general loop
+                // below is correct for any sampling ratio, but it pays for that
+                // generality on every sample: two nested loops whose lengths
+                // the optimizer cannot see are one and two, a table lookup for
+                // the column, and an integer division by a count it cannot know
+                // is one or four.
+                let uniform: Int = spans.isEmpty ? 0 : spans[0].end - spans[0].start
+                var prefix: Int = 0
+                while prefix < spans.count,
+                      spans[prefix].end - spans[prefix].start == uniform,
+                      spans[prefix].start == prefix * uniform {
+                    prefix += 1
+                }
+
                 self.values.withUnsafeBufferPointer { values in
                     output.withMutableSamples { samples in
                         for y: Int in 0 ..< size.y {
@@ -124,7 +145,48 @@ extension JPEG.Data.Rectangular {
                             )
 
                             let base: Int = y * size.x
-                            for x: Int in 0 ..< size.x {
+                            var x: Int = 0
+
+                            if uniform == 1, y1 - y0 == 1 {
+                                // One source sample per output sample: the luma
+                                // plane of every subsampled image, and every
+                                // plane of an unsubsampled one. A strided read,
+                                // with the averaging gone rather than performed
+                                // over a box of one.
+                                var index: Int = y0 * self.width * stride + plane
+                                while x < prefix {
+                                    samples[base + x] = values[index]
+                                    index += stride
+                                    x += 1
+                                }
+                            } else if uniform == 2, y1 - y0 == 2 {
+                                // A 2x2 box: the chroma planes of a 4:2:0
+                                // image, which is the overwhelming majority of
+                                // what anything encodes. Four samples, a
+                                // rounding term and a shift — the division by
+                                // four the general loop cannot avoid is the
+                                // single most expensive instruction in it.
+                                var above: Int = y0 * self.width * stride + plane
+                                var below: Int = above + self.width * stride
+                                while x < prefix {
+                                    let total: Int32 =
+                                        .init(values[above])
+                                        + .init(values[above + stride])
+                                        + .init(values[below])
+                                        + .init(values[below + stride])
+                                    samples[base + x] = .init(
+                                        truncatingIfNeeded: (total + 2) >> 2
+                                    )
+                                    above += 2 * stride
+                                    below += 2 * stride
+                                    x += 1
+                                }
+                            }
+
+                            // Whatever the specialized loops did not cover: the
+                            // narrower boxes at the right and bottom edges, and
+                            // any sampling ratio other than one or two.
+                            while x < size.x {
                                 let span: (start: Int, end: Int) = spans[x]
 
                                 var total: Int = 0
@@ -142,6 +204,7 @@ extension JPEG.Data.Rectangular {
                                 samples[base + x] = .init(
                                     truncatingIfNeeded: (total + count / 2) / count
                                 )
+                                x += 1
                             }
                         }
                     }
