@@ -81,6 +81,96 @@ static void ycc_to_rgb_neon(const uint16_t *interleaved, ptrdiff_t count,
     }
 }
 
+/* The encoding direction. Same constants, transposed. */
+#define R_TO_Y 19595
+#define G_TO_Y 38470
+#define B_TO_Y 7471
+#define R_TO_CB (-11059)
+#define G_TO_CB (-21709)
+#define B_TO_CB 32768
+#define R_TO_CR 32768
+#define G_TO_CR (-27439)
+#define B_TO_CR (-5329)
+
+/* Clamps four lanes to 0 ... 255 and narrows them.
+ *
+ * Explicit min and max rather than a saturating narrow: the saturating one stops
+ * at 65535 and what is wanted is 255, since these are 8-bit samples in 16-bit
+ * storage. */
+static inline uint16x4_t clamp4(int32x4_t v) {
+    const int32x4_t capped = vminq_s32(vmaxq_s32(v, vdupq_n_s32(0)),
+                                       vdupq_n_s32(255));
+    return vmovn_u32(vreinterpretq_u32_s32(capped));
+}
+
+/* Converts four pixels held as three 32-bit vectors. */
+static inline void forward4(int32x4_t r, int32x4_t g, int32x4_t b,
+                            int32x4_t *y, int32x4_t *cb, int32x4_t *cr) {
+    const int32x4_t half = vdupq_n_s32(HALF);
+    *y = vaddq_s32(
+        vmlaq_n_s32(vmlaq_n_s32(vmulq_n_s32(r, R_TO_Y), g, G_TO_Y), b, B_TO_Y),
+        half);
+    // Chrominance takes its rounding term at the shift instead, and is biased by
+    // 128 there, so that a naturally signed difference fits an unsigned sample.
+    *cb = vmlaq_n_s32(vmlaq_n_s32(vmulq_n_s32(r, R_TO_CB), g, G_TO_CB), b, B_TO_CB);
+    *cr = vmlaq_n_s32(vmlaq_n_s32(vmulq_n_s32(r, R_TO_CR), g, G_TO_CR), b, B_TO_CR);
+}
+
+static void rgb_to_ycc_neon(const uint8_t *pixels, int32_t size, int32_t red,
+                            int32_t green, int32_t blue, ptrdiff_t count,
+                            uint16_t *interleaved) {
+    const int32x4_t half = vdupq_n_s32(HALF);
+    const int32x4_t bias = vdupq_n_s32(128);
+
+    for (ptrdiff_t i = 0; i < count; i += 8) {
+        const uint8_t *p = pixels + i * size;
+
+        // Three- and four-channel deinterleaving loads, which is what makes
+        // this direction as cheap as the other one on this architecture. The
+        // channel order is then a selection among what was loaded rather than a
+        // shuffle, since the offsets are fixed for the whole image.
+        uint8x8_t channels[4];
+        if (size == 3) {
+            const uint8x8x3_t in = vld3_u8(p);
+            channels[0] = in.val[0];
+            channels[1] = in.val[1];
+            channels[2] = in.val[2];
+            channels[3] = in.val[0];
+        } else {
+            const uint8x8x4_t in = vld4_u8(p);
+            channels[0] = in.val[0];
+            channels[1] = in.val[1];
+            channels[2] = in.val[2];
+            channels[3] = in.val[3];
+        }
+
+        const uint16x8_t r16 = vmovl_u8(channels[red]);
+        const uint16x8_t g16 = vmovl_u8(channels[green]);
+        const uint16x8_t b16 = vmovl_u8(channels[blue]);
+
+        int32x4_t ylo, cblo, crlo, yhi, cbhi, crhi;
+        forward4(vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(r16))),
+                 vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(g16))),
+                 vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(b16))),
+                 &ylo, &cblo, &crlo);
+        forward4(vreinterpretq_s32_u32(vmovl_high_u16(r16)),
+                 vreinterpretq_s32_u32(vmovl_high_u16(g16)),
+                 vreinterpretq_s32_u32(vmovl_high_u16(b16)),
+                 &yhi, &cbhi, &crhi);
+
+        uint16x8x3_t out;
+        out.val[0] = vcombine_u16(clamp4(vshrq_n_s32(ylo, 16)),
+                                  clamp4(vshrq_n_s32(yhi, 16)));
+        out.val[1] = vcombine_u16(
+            clamp4(vaddq_s32(vshrq_n_s32(vaddq_s32(cblo, half), 16), bias)),
+            clamp4(vaddq_s32(vshrq_n_s32(vaddq_s32(cbhi, half), 16), bias)));
+        out.val[2] = vcombine_u16(
+            clamp4(vaddq_s32(vshrq_n_s32(vaddq_s32(crlo, half), 16), bias)),
+            clamp4(vaddq_s32(vshrq_n_s32(vaddq_s32(crhi, half), 16), bias)));
+        vst3q_u16(interleaved + 3 * i, out);
+    }
+}
+
 #endif
 
 /* The tail, and the whole thing on a processor without NEON.
@@ -119,6 +209,54 @@ static void ycc_to_rgb_scalar(const uint16_t *interleaved, ptrdiff_t count,
         out[1] = clamp((y - 22554 * cb - 46802 * cr) >> 16);
         out[2] = clamp((y + 116130 * cb) >> 16);
     }
+}
+
+static inline uint16_t clampSample(int32_t value) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 255) {
+        return 255;
+    }
+    return (uint16_t)value;
+}
+
+static void rgb_to_ycc_scalar(const uint8_t *pixels, int32_t size, int32_t red,
+                              int32_t green, int32_t blue, ptrdiff_t count,
+                              uint16_t *interleaved) {
+    for (ptrdiff_t i = 0; i < count; ++i) {
+        const uint8_t *p = pixels + i * size;
+        const int32_t r = p[red], g = p[green], b = p[blue];
+
+        const int32_t y = 19595 * r + 38470 * g + 7471 * b + 32768;
+        const int32_t cb = -11059 * r - 21709 * g + 32768 * b;
+        const int32_t cr = 32768 * r - 27439 * g - 5329 * b;
+
+        uint16_t *out = interleaved + 3 * i;
+        out[0] = clampSample(y >> 16);
+        out[1] = clampSample(((cb + 32768) >> 16) + 128);
+        out[2] = clampSample(((cr + 32768) >> 16) + 128);
+    }
+}
+
+void jpeg_accel_rgb_to_ycc_neon(const uint8_t *pixels, int32_t size, int32_t red,
+                                int32_t green, int32_t blue, ptrdiff_t count,
+                                uint16_t *interleaved) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    /* Only the two pixel sizes TurboJPEG defines have a deinterleaving load.
+     * Anything else falls to the scalar loop rather than being computed wrongly,
+     * which is what a kernel that assumed a size would do. */
+    if (size == 3 || size == 4) {
+        const ptrdiff_t vectored = count & ~(ptrdiff_t)7;
+        if (vectored > 0) {
+            rgb_to_ycc_neon(pixels, size, red, green, blue, vectored, interleaved);
+        }
+        rgb_to_ycc_scalar(pixels + (ptrdiff_t)size * vectored, size, red, green,
+                          blue, count - vectored, interleaved + 3 * vectored);
+        return;
+    }
+#endif
+    rgb_to_ycc_scalar(pixels, size, red, green, blue, count, interleaved);
 }
 
 void jpeg_accel_ycc_to_rgb_neon(const uint16_t *interleaved, ptrdiff_t count,
