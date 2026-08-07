@@ -110,9 +110,6 @@ extension JPEG.Data.Planar {
 
     /// Blends the four samples around an output position.
     ///
-    /// 32-bit intermediates: a sample is at most 16 bits and a fraction at most
-    /// 16, so the products fit with room to spare.
-    ///
     /// Factored out so that the two loops below — one reading its columns from a
     /// table, one walking them — are demonstrably the same arithmetic. The
     /// upsampler is the one place in the decoder where two implementations of a
@@ -122,9 +119,30 @@ extension JPEG.Data.Planar {
     private static func blend(
         _ a: Int32, _ b: Int32, _ c: Int32, _ d: Int32, fx: Int32, fy: Int32
     ) -> UInt16 {
-        let top: Int32 = (a << 8) + ((b - a) * fx >> 8)
-        let bottom: Int32 = (c << 8) + ((d - c) * fx >> 8)
-        return .init(((top << 8) + ((bottom - top) * fy >> 8) + (1 << 15)) >> 16)
+        // The fractions are narrowed to eight bits *before* multiplying, which
+        // is what the expression this replaces did: Swift binds a shift tighter
+        // than a multiply, so `(b - a) * fx >> 8` means `(b - a) * (fx >> 8)`
+        // and not the other grouping. Written with the parentheses, because
+        // relying on that reading is how the overflow below got in.
+        let horizontal: Int32 = fx >> 8
+        let top: Int32 = (a << 8) + (b - a) * horizontal
+        let bottom: Int32 = (c << 8) + (d - c) * horizontal
+
+        // The vertical stage in 64 bits, which is not optional. At 16 bits of
+        // precision `top` reaches 26 bits, so `top << 8` overflows a signed
+        // 32-bit value — and a shift discards what it pushes out silently, so
+        // rather than trapping there it wrapped to a negative and trapped one
+        // step later, converting to `UInt16`. A hard chroma edge in a 16-bit
+        // image was enough to do it. At 8 and 12 bits everything fits and the
+        // 32-bit arithmetic was correct, which is why it stood.
+        //
+        // On a 64-bit target this is the same instruction count with a wider
+        // prefix. The first stage stays 32-bit because it genuinely fits: a
+        // sample difference is 17 bits and a narrowed fraction is 8.
+        let value: Int64 = (.init(top) << 8)
+            + .init(bottom - top) * .init(fy >> 8)
+            + (1 << 15)
+        return .init(value >> 16)
     }
 
     /// Upsamples and interleaves this image to full resolution.
