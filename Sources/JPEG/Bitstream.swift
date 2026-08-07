@@ -69,6 +69,33 @@ extension JPEG.Bitstream {
     /// Returns the next `count` bits without advancing, zero-padded past the
     /// end of the interval.
     ///
+    /// This gathers its window from the array on every call rather than keeping
+    /// one in a register, which is the opposite of what libjpeg does and looks
+    /// like the obvious thing to fix. It was tried, twice, and both times it was
+    /// slower. Instruction counts under callgrind, draining a 64 KB interval
+    /// twenty times in the peek-advance-read pattern a Huffman coefficient
+    /// produces:
+    ///
+    /// | | instructions | |
+    /// | --- | --- | --- |
+    /// | gathering the window here | 175,002,540 | |
+    /// | a 64-bit cache refilled a byte at a time | 240,909,963 | +37.7% |
+    /// | a 64-bit cache refilled 32 bits at a time | 217,317,738 | +24.2% |
+    ///
+    /// The reason is that this function is already most of a bit cache. It reads
+    /// three bytes with three *independent* conditional loads and keeps no state
+    /// at all. A cache replaces those loads with state that every ``advance(_:)``
+    /// must update — shift the register, decrement the count, test whether to
+    /// refill, and refill at a shift amount derived from the count — and that
+    /// chain is serial, where the three loads are not. libjpeg gains from a cache
+    /// because the alternative it is compared against extracts one bit at a time;
+    /// against a windowed peek there is nothing left to win.
+    ///
+    /// The measurement is worth more than the conclusion: if this is tried again,
+    /// the number to beat is in the table, and `BitstreamTests` holds a
+    /// differential check against a bit-at-a-time reference that a broken refill
+    /// will fail.
+    ///
     /// -   Parameter count:
     ///     A bit count, at most 16 — the longest Huffman code T.81 permits.
     public func peek(_ count: Int) -> UInt16 {
