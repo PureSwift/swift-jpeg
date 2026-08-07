@@ -68,7 +68,23 @@ let checking: Bool = arguments.contains("--check")
 let side: Int = 1024
 let reps: Int = arguments.contains("--quick") ? 5 : 20
 
-let installed: String = JPEG.Accelerate.install()
+// What this processor can actually run. Found by installing and resetting, so
+// the answer comes from the same code path that installs for real rather than
+// from a second reading of the feature bits.
+let accelerator: String = {
+    let name: String = JPEG.Accelerate.install()
+    JPEG.Kernel.reset()
+    return name
+}()
+
+// `--portable` leaves the engine's own kernels in place for the end-to-end
+// figures, which is what makes them comparable: run twice and the difference is
+// exactly what installing the accelerator buys. The kernel section further down
+// installs and resets explicitly, so its ratios are against `accelerator` either
+// way.
+let installed: String = arguments.contains("--portable")
+    ? "portable"
+    : JPEG.Accelerate.install()
 print("kernels:  \(installed)")
 print("cpu:      \(JPEG.Accelerate.features.joined(separator: " "))")
 print("image:    \(side)x\(side) 4:2:0")
@@ -240,13 +256,13 @@ let forwardColorRatio: Double = portableForwardColor / accelForwardColor
 
 print("kernels, \(blocks) blocks each")
 print(String(format: "  inverse  portable %@  %@ %@  %.2fx",
-             seconds(portableInverse), installed, seconds(accelInverse), inverseRatio))
+             seconds(portableInverse), accelerator, seconds(accelInverse), inverseRatio))
 print(String(format: "  forward  portable %@  %@ %@  %.2fx",
-             seconds(portableForward), installed, seconds(accelForward), forwardRatio))
+             seconds(portableForward), accelerator, seconds(accelForward), forwardRatio))
 print(String(format: "  color    portable %@  %@ %@  %.2fx  (%d pixels)",
-             seconds(portableColor), installed, seconds(accelColor), colorRatio, pixelCount))
+             seconds(portableColor), accelerator, seconds(accelColor), colorRatio, pixelCount))
 print(String(format: "  pack     portable %@  %@ %@  %.2fx  (%d pixels)",
-             seconds(portableForwardColor), installed, seconds(accelForwardColor),
+             seconds(portableForwardColor), accelerator, seconds(accelForwardColor),
              forwardColorRatio, pixelCount))
 
 // MARK: - the check
@@ -273,7 +289,7 @@ coefficients.withUnsafeBufferPointer { input in
     }
 }
 if accelerated != portable {
-    failures.append("the \(installed) inverse transform disagrees with the portable one")
+    failures.append("the \(accelerator) inverse transform disagrees with the portable one")
 }
 
 // Colour conversion is held to bit equality over the whole image, not a block.
@@ -297,10 +313,10 @@ JPEG.Accelerate.install()
 let acceleratedRGB: [UInt8] = convert()
 JPEG.Kernel.reset()
 if acceleratedRGB != convert() {
-    failures.append("the \(installed) color transform disagrees with the portable one")
+    failures.append("the \(accelerator) color transform disagrees with the portable one")
 }
 
-if installed == "portable" {
+if accelerator == "portable" {
     print("")
     print("no accelerated kernels for this processor; ratio check skipped")
 } else {
