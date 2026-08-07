@@ -137,4 +137,106 @@ struct BitstreamTests {
         #expect(intervals.count == 1)
         #expect(JPEG.Bitstream(intervals[0]).peek(16) == 0xFFD0)
     }
+
+    /// A reader that extracts one bit at a time, to check the real one against.
+    ///
+    /// Deliberately the slowest possible implementation. Its whole value is that
+    /// there is nowhere for a windowing or buffering mistake to hide in it: it
+    /// indexes a bit, and past the end it returns zero.
+    private struct Reference {
+        private let bytes: [UInt8]
+        /// The read position, for checking the real reader's own bookkeeping.
+        private(set) var position: Int
+
+        init(_ bytes: [UInt8]) {
+            self.bytes = bytes
+            self.position = 0
+        }
+
+        private func bit(at i: Int) -> UInt16 {
+            let byte: Int = i >> 3
+            guard byte < self.bytes.count else {
+                return 0
+            }
+            return .init((self.bytes[byte] >> (7 - UInt8(i & 7))) & 1)
+        }
+
+        func peek(_ count: Int) -> UInt16 {
+            var value: UInt16 = 0
+            for k: Int in 0 ..< count {
+                value = value << 1 | self.bit(at: self.position + k)
+            }
+            return value
+        }
+
+        mutating func advance(_ count: Int) {
+            self.position += count
+        }
+    }
+
+    /// The reader must agree with a bit-at-a-time reference, everywhere.
+    ///
+    /// The hand-written cases above pin down the behaviour that was thought
+    /// about; this one covers the behaviour that was not. It exists because the
+    /// obvious optimization for this type is a register-held bit cache — see the
+    /// note on `peek` — and the way a cache breaks is at a refill boundary, on
+    /// one width out of sixteen, at one offset out of eight. A case-by-case test
+    /// will not find that and a decoded image will not either: it will just be
+    /// wrong somewhere.
+    ///
+    /// Reads run past the end of the interval on purpose. Zero padding there is
+    /// contract, not an accident — a truncated stream has to decode as far as it
+    /// can rather than trap.
+    @Test("agrees with a bit-at-a-time reference")
+    func differential() {
+        var state: UInt64 = 0xB17_5EED
+        func next() -> UInt64 {
+            state ^= state >> 12
+            state ^= state << 25
+            state ^= state >> 27
+            return state &* 2685821657736338717
+        }
+
+        for trial: Int in 0 ..< 64 {
+            // Short intervals so the walk spends much of its time near and past
+            // the end, which is where the padding rule applies.
+            let count: Int = 1 + trial % 24
+            var raw: [UInt8] = []
+            for _ in 0 ..< count {
+                // No 0xFF, so unstuffing leaves the bytes alone and the
+                // reference sees exactly what the reader does. Stuffing itself is
+                // covered by the cases above.
+                raw.append(.init(truncatingIfNeeded: next() >> 56) & 0xFE)
+            }
+
+            var bits: JPEG.Bitstream = .init(raw)
+            var reference: Reference = .init(raw)
+
+            // Walk well past the end.
+            var step: Int = 0
+            while step < 200 {
+                let width: Int = 1 + .init(next() % 16)
+                #expect(
+                    bits.peek(width) == reference.peek(width),
+                    "trial \(trial), step \(step), peek \(width) at bit \(bits.bit)"
+                )
+
+                // A peek must not move the position, which is what lets a
+                // decoder look at a window before knowing how much of it to
+                // consume.
+                #expect(bits.peek(width) == reference.peek(width))
+
+                let consumed: Int = 1 + .init(next() % 16)
+                #expect(
+                    bits.read(consumed) == reference.peek(consumed),
+                    "trial \(trial), step \(step), read \(consumed)"
+                )
+                reference.advance(consumed)
+                #expect(bits.bit == reference.position)
+
+                step += 1
+            }
+        }
+    }
 }
+
