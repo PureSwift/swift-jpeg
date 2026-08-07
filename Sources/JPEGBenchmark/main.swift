@@ -201,19 +201,42 @@ func timeColor() -> Double {
     }
 }
 
+// The encoding direction, over the image's own pixels. `JPEG.RGB` is three
+// `UInt8` fields, so an array of them is already the packed layout the kernel
+// reads — the same assumption the unpack path makes, and checked there.
+func timeForwardColor() -> Double {
+    var out: [UInt16] = .init(repeating: 0, count: pixelCount * 3)
+    return out.withUnsafeMutableBufferPointer { out in
+        pixels.withUnsafeBufferPointer { input in
+            let bytes: UnsafePointer<UInt8> = .init(
+                UnsafeRawPointer(input.baseAddress!)
+                    .assumingMemoryBound(to: UInt8.self)
+            )
+            return best(reps) {
+                JPEG.Kernel.forwardColorTransform(
+                    bytes, 3, 0, 1, 2, pixelCount, out.baseAddress!
+                )
+            }
+        }
+    }
+}
+
 JPEG.Kernel.reset()
 let portableInverse: Double = timeInverse()
 let portableForward: Double = timeForward()
 let portableColor: Double = timeColor()
+let portableForwardColor: Double = timeForwardColor()
 
 JPEG.Accelerate.install()
 let accelInverse: Double = timeInverse()
 let accelForward: Double = timeForward()
 let accelColor: Double = timeColor()
+let accelForwardColor: Double = timeForwardColor()
 
 let inverseRatio: Double = portableInverse / accelInverse
 let forwardRatio: Double = portableForward / accelForward
 let colorRatio: Double = portableColor / accelColor
+let forwardColorRatio: Double = portableForwardColor / accelForwardColor
 
 print("kernels, \(blocks) blocks each")
 print(String(format: "  inverse  portable %@  %@ %@  %.2fx",
@@ -222,6 +245,9 @@ print(String(format: "  forward  portable %@  %@ %@  %.2fx",
              seconds(portableForward), installed, seconds(accelForward), forwardRatio))
 print(String(format: "  color    portable %@  %@ %@  %.2fx  (%d pixels)",
              seconds(portableColor), installed, seconds(accelColor), colorRatio, pixelCount))
+print(String(format: "  pack     portable %@  %@ %@  %.2fx  (%d pixels)",
+             seconds(portableForwardColor), installed, seconds(accelForwardColor),
+             forwardColorRatio, pixelCount))
 
 // MARK: - the check
 
@@ -288,6 +314,7 @@ if installed == "portable" {
         ("inverse", inverseRatio),
         ("forward", forwardRatio),
         ("color", colorRatio),
+        ("pack", forwardColorRatio),
     ] where ratio < floor {
         failures.append(String(format: "%@ ratio %.2fx is below %.2fx",
                                name, ratio, floor))
