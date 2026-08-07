@@ -133,7 +133,7 @@ extension JPEG.Data.Rectangular {
                 }
 
                 self.values.withUnsafeBufferPointer { values in
-                    output.withMutableSamples { samples in
+                    output.withUnsafeMutableSamples { samples in
                         for y: Int in 0 ..< size.y {
                             let row: Int = Swift.min(y, extent.y - 1)
                             let y0: Int = Swift.min(
@@ -246,7 +246,7 @@ extension JPEG.Data.Planar {
             withUnsafeTemporaryAllocation(of: UInt16.self, capacity: 64) { samples in
             withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { coefficients in
             withUnsafeTemporaryAllocation(of: Int16.self, capacity: 64) { levels in
-                self.planes[plane].withSamples { source in
+                self.planes[plane].withUnsafeSamples { source in
                     for by: Int in 0 ..< blocks.y {
                         for bx: Int in 0 ..< blocks.x {
                             // The plane is padded to whole blocks, so every
