@@ -1,6 +1,7 @@
 #ifndef SWIFT_JPEG_ACCEL_H
 #define SWIFT_JPEG_ACCEL_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* Accelerated transform kernels.
@@ -63,5 +64,28 @@ void jpeg_accel_idct8_neon(const int32_t *JPEG_NONNULL coefficients,
 void jpeg_accel_fdct8_neon(const uint16_t *JPEG_NONNULL samples,
                            int32_t precision,
                            int32_t *JPEG_NONNULL coefficients);
+
+/* `count` interleaved YCbCr samples to `count` packed RGB pixels.
+ *
+ * Reads 3 * count uint16_t and writes 3 * count uint8_t. `shift` narrows a
+ * sample to eight bits: positive shifts right, negative shifts left, and the
+ * result is truncated rather than clamped, which is what the engine's own
+ * narrowing does.
+ *
+ * Unlike the transforms, these are exact rather than agreeing to within a
+ * count. The conversion is a fixed-point matrix, not a factorization with
+ * intermediate roundings, so there is nothing for two implementations to
+ * disagree about — and a colour kernel that was off by one would tint every
+ * pixel of every image this library decodes.
+ */
+void jpeg_accel_ycc_to_rgb_avx2(const uint16_t *JPEG_NONNULL interleaved,
+                                ptrdiff_t count,
+                                int32_t shift,
+                                uint8_t *JPEG_NONNULL rgb);
+
+void jpeg_accel_ycc_to_rgb_neon(const uint16_t *JPEG_NONNULL interleaved,
+                                ptrdiff_t count,
+                                int32_t shift,
+                                uint8_t *JPEG_NONNULL rgb);
 
 #endif
