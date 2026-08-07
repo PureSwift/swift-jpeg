@@ -224,6 +224,81 @@ struct AccelerateTests {
         }
     }
 
+    /// Runs whichever encoding color transform is installed, over a buffer with
+    /// a sentinel past the end.
+    private static func packed(
+        _ pixels: [UInt8],
+        size: Int32,
+        red: Int32,
+        green: Int32,
+        blue: Int32,
+        count: Int,
+        padding: Int
+    ) -> [UInt16] {
+        var output: [UInt16] = .init(repeating: 0xAAAA, count: 3 * count + padding)
+        output.withUnsafeMutableBufferPointer { output in
+            pixels.withUnsafeBufferPointer { input in
+                JPEG.Kernel.forwardColorTransform(
+                    input.baseAddress!, size, red, green, blue, count,
+                    output.baseAddress!
+                )
+            }
+        }
+        return output
+    }
+
+    /// The accelerated encoding color transform against the portable one.
+    ///
+    /// Every channel arrangement, not just RGB. The kernel builds its gather
+    /// masks from the offsets it is given, so an arrangement it has never seen
+    /// is the ordinary case rather than the exotic one — and a size of five is
+    /// included because the vector path has to decline a pixel size it cannot
+    /// gather rather than compute something wrong.
+    @Test("encoding color transform matches")
+    func forwardColor() {
+        var generator: Generator = .init(seed: 0xFEED)
+
+        let layouts: [(size: Int32, red: Int32, green: Int32, blue: Int32)] = [
+            (3, 0, 1, 2),   // RGB
+            (3, 2, 1, 0),   // BGR
+            (4, 0, 1, 2),   // RGBX
+            (4, 2, 1, 0),   // BGRX
+            (4, 1, 2, 3),   // XRGB
+            (4, 3, 2, 1),   // XBGR
+            (5, 0, 2, 4),   // no vector path
+        ]
+
+        for layout: (size: Int32, red: Int32, green: Int32, blue: Int32) in layouts {
+            for count: Int in 1 ... 40 {
+                let pixels: [UInt8] = (0 ..< count * .init(layout.size)).map { _ in
+                    .init(truncatingIfNeeded: generator.next() >> 56)
+                }
+
+                var fast: [UInt16] = []
+                Self.accelerated { installed in
+                    guard installed != "portable" else {
+                        return
+                    }
+                    fast = Self.packed(
+                        pixels, size: layout.size, red: layout.red,
+                        green: layout.green, blue: layout.blue,
+                        count: count, padding: 16
+                    )
+                }
+                guard !fast.isEmpty else {
+                    return
+                }
+
+                let portable: [UInt16] = Self.packed(
+                    pixels, size: layout.size, red: layout.red,
+                    green: layout.green, blue: layout.blue,
+                    count: count, padding: 16
+                )
+                #expect(fast == portable, "\(layout), \(count) pixels")
+            }
+        }
+    }
+
     /// A whole image must decode identically either way.
     ///
     /// The block tests above cover the arithmetic; this covers the wiring —
