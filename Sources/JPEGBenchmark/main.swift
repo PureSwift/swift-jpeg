@@ -177,22 +177,51 @@ func timeForward() -> Double {
     }
 }
 
+// Colour conversion runs over the whole image rather than a block, and over the
+// image's own samples rather than synthesized ones — the arithmetic is
+// data-independent, so real samples cost nothing extra to use and rule out a
+// synthetic buffer that happened to be friendlier than a photograph.
+//
+// `values` is a mutable global, and a mutable global is main-actor isolated in a
+// script while a top-level function is not, so the samples are rebound to a
+// constant. Copy-on-write means that is a retain, not a megapixel.
+let ycc: [UInt16] = values
+let pixelCount: Int = side * side
+
+func timeColor() -> Double {
+    var out: [UInt8] = .init(repeating: 0, count: pixelCount * 3)
+    return out.withUnsafeMutableBufferPointer { out in
+        ycc.withUnsafeBufferPointer { input in
+            best(reps) {
+                JPEG.Kernel.colorTransform(
+                    input.baseAddress!, pixelCount, 0, out.baseAddress!
+                )
+            }
+        }
+    }
+}
+
 JPEG.Kernel.reset()
 let portableInverse: Double = timeInverse()
 let portableForward: Double = timeForward()
+let portableColor: Double = timeColor()
 
 JPEG.Accelerate.install()
 let accelInverse: Double = timeInverse()
 let accelForward: Double = timeForward()
+let accelColor: Double = timeColor()
 
 let inverseRatio: Double = portableInverse / accelInverse
 let forwardRatio: Double = portableForward / accelForward
+let colorRatio: Double = portableColor / accelColor
 
 print("kernels, \(blocks) blocks each")
 print(String(format: "  inverse  portable %@  %@ %@  %.2fx",
              seconds(portableInverse), installed, seconds(accelInverse), inverseRatio))
 print(String(format: "  forward  portable %@  %@ %@  %.2fx",
              seconds(portableForward), installed, seconds(accelForward), forwardRatio))
+print(String(format: "  color    portable %@  %@ %@  %.2fx  (%d pixels)",
+             seconds(portableColor), installed, seconds(accelColor), colorRatio, pixelCount))
 
 // MARK: - the check
 
@@ -221,22 +250,47 @@ if accelerated != portable {
     failures.append("the \(installed) inverse transform disagrees with the portable one")
 }
 
+// Colour conversion is held to bit equality over the whole image, not a block.
+// It is exact by construction — one fixed-point matrix, one rounding — and the
+// suite proves that exhaustively; this catches a build that wired up a kernel
+// for the wrong architecture, which would show as garbage rather than as a
+// count.
+func convert() -> [UInt8] {
+    var out: [UInt8] = .init(repeating: 0, count: pixelCount * 3)
+    out.withUnsafeMutableBufferPointer { out in
+        ycc.withUnsafeBufferPointer { input in
+            JPEG.Kernel.colorTransform(
+                input.baseAddress!, pixelCount, 0, out.baseAddress!
+            )
+        }
+    }
+    return out
+}
+
+JPEG.Accelerate.install()
+let acceleratedRGB: [UInt8] = convert()
+JPEG.Kernel.reset()
+if acceleratedRGB != convert() {
+    failures.append("the \(installed) color transform disagrees with the portable one")
+}
+
 if installed == "portable" {
     print("")
     print("no accelerated kernels for this processor; ratio check skipped")
 } else {
-    // Deliberately loose. The measured speedups are around 1.75x and 1.6x; this
-    // is asking whether the accelerated kernel is being called at all and is
-    // not catastrophically slower, not policing a number. A tight threshold on
-    // a shared runner is a flaky test, and a flaky test gets ignored.
+    // Deliberately loose. The measured speedups are around 5x for the
+    // transforms and 3x for colour; this is asking whether the accelerated
+    // kernel is being called at all and is not catastrophically slower, not
+    // policing a number. A tight threshold on a shared runner is a flaky test,
+    // and a flaky test gets ignored.
     let floor: Double = 1.15
-    if inverseRatio < floor {
-        failures.append(String(format: "inverse ratio %.2fx is below %.2fx",
-                               inverseRatio, floor))
-    }
-    if forwardRatio < floor {
-        failures.append(String(format: "forward ratio %.2fx is below %.2fx",
-                               forwardRatio, floor))
+    for (name, ratio): (String, Double) in [
+        ("inverse", inverseRatio),
+        ("forward", forwardRatio),
+        ("color", colorRatio),
+    ] where ratio < floor {
+        failures.append(String(format: "%@ ratio %.2fx is below %.2fx",
+                               name, ratio, floor))
     }
 }
 
