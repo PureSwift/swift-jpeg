@@ -24,15 +24,43 @@ extension JPEG.Data {
             }
 
             /// Runs `body` on this plane's samples, row-major.
-            func withSamples<T>(_ body: (UnsafeBufferPointer<UInt16>) -> T) -> T {
-                self.buffer.withUnsafeBufferPointer(body)
+            ///
+            /// The only way to read a whole plane from outside this module. The
+            /// subscript below clamps and takes one sample at a time, which is
+            /// right for interpolating across an edge and wrong for handing a
+            /// plane to something else — a texture upload, a YUV file, another
+            /// codec — and going through ``Rectangular`` to get there
+            /// interleaves and stretches the samples, which is a copy and a
+            /// change of meaning rather than a way of reading these ones.
+            ///
+            /// A `Span` rather than a pointer, so that reading a plane needs no
+            /// unsafe code at the call site and no copy either. The lifetime is
+            /// what the closure gives it: the span cannot outlive the call, and
+            /// the compiler enforces that rather than the documentation asking
+            /// for it.
+            ///
+            /// -   Parameter body:
+            ///     Receives `size.x * size.y` samples, row-major, including the
+            ///     block padding — so the row stride is `size.x`, which is
+            ///     usually a little wider than the component resolution the
+            ///     layout reports.
+            public func withSamples<T, E>(
+                _ body: (Span<UInt16>) throws(E) -> T
+            ) throws(E) -> T where E: Error {
+                try body(self.buffer.span)
             }
 
             /// Runs `body` on this plane's samples, row-major and writable.
-            mutating func withMutableSamples<T>(
-                _ body: (UnsafeMutableBufferPointer<UInt16>) -> T
-            ) -> T {
-                self.buffer.withUnsafeMutableBufferPointer { body($0) }
+            ///
+            /// The counterpart to ``withSamples(_:)``, for filling a plane that
+            /// is about to be encoded. The subscript's setter drops writes
+            /// outside the plane; a `MutableSpan` traps on them instead, which
+            /// is the better failure for code that computes its indices.
+            public mutating func withMutableSamples<T, E>(
+                _ body: (inout MutableSpan<UInt16>) throws(E) -> T
+            ) throws(E) -> T where E: Error {
+                var span: MutableSpan<UInt16> = self.buffer.mutableSpan
+                return try body(&span)
             }
 
             /// Runs `body` on this plane's samples through a raw pointer.
