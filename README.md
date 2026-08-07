@@ -58,6 +58,28 @@ Because the engine performs no I/O of its own, reading a file is the caller's
 job. Bytes go in through `JPEG.Bytestream.Source`, which `[UInt8]` already
 conforms to.
 
+`Span` is used where it pays and not where it does not, and the line between them
+was measured rather than guessed. Reading a whole plane is a `Span`:
+`plane.withSamples { ... }` is public, needs no unsafe code and copies nothing,
+and the lifetime is enforced by the compiler rather than requested by a comment.
+The per-sample loops inside the resamplers keep raw pointers, because a `Span`
+subscript is bounds checked and in those loops the check is not eliminated — the
+index is a clamped column plus a row offset and the optimizer cannot prove the
+sum is in range. Counted under callgrind, that costs 30% more instructions on the
+upsampler's inner loop and 60% more on a strided copy. The spelling says which is
+which: `withSamples` is the safe one, `withUnsafeSamples` has to be asked for.
+
+`~Copyable` is not used, and that is also a measurement rather than a taste. The
+only real candidate was `JPEG.Bitstream`, where forbidding copies would prevent a
+reader being duplicated and its position silently diverging. Applied, it compiles,
+and it generates the same code to within 67 instructions out of 182 million — so
+there is no performance argument, only a safety one, and against that it removes a
+capability a caller might legitimately want (saving a read position to backtrack
+to) and makes the type harder to test, since swift-testing's `#expect` requires
+`Copyable` to inspect a property. Nothing else in the codebase is a candidate at
+all: the three image tiers are values that callers copy on purpose, and the ABI's
+handle has to be a class to have an address a `void *` can carry.
+
 ## Usage
 
 ```swift
