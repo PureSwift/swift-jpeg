@@ -341,3 +341,10 @@ largest possible difference between neighbouring samples.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+All code here is original, and no other codec's source is reproduced in it. The
+one thing this library is deliberately compatible with is the TurboJPEG C API,
+whose header is BSD-3-Clause and is vendored under
+[`Sources/CTurboJPEG`](Sources/CTurboJPEG) with its notice intact — a drop-in
+replacement has to agree with the interface it replaces, and that is the
+interface.
