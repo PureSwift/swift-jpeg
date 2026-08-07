@@ -154,6 +154,76 @@ struct AccelerateTests {
         #expect(worst == 0, "worst deviation \(worst) over \(blocks) blocks")
     }
 
+    /// Runs whichever color transform is installed, over a buffer with a
+    /// sentinel past the end.
+    private static func converted(
+        _ interleaved: [UInt16], shift: Int32, padding: Int
+    ) -> [UInt8] {
+        // Three samples in per pixel and three bytes out, so the output is the
+        // same count as the input.
+        var output: [UInt8] = .init(
+            repeating: 0xAA, count: interleaved.count + padding
+        )
+        output.withUnsafeMutableBufferPointer { output in
+            interleaved.withUnsafeBufferPointer { input in
+                JPEG.Kernel.colorTransform(
+                    input.baseAddress!,
+                    interleaved.count / 3,
+                    shift,
+                    output.baseAddress!
+                )
+            }
+        }
+        return output
+    }
+
+    /// The accelerated color transform against the portable one.
+    ///
+    /// Held to exactness, unlike the transforms. Those are two roundings of one
+    /// real-valued factorization and may legitimately differ in the last bit;
+    /// this is one fixed-point matrix with one rounding, so a disagreement of a
+    /// single count would not be rounding, it would be a tint on every pixel of
+    /// every image — visible only to users of whichever processor selected the
+    /// wrong kernel.
+    ///
+    /// Every pixel count from one to forty, because the kernel converts eight
+    /// at a time and an image whose pixel count is not a multiple of eight is
+    /// the ordinary case rather than the edge one. The padding past the end
+    /// catches the other half of that mistake: a kernel that writes a whole
+    /// vector where only a tail was asked for.
+    @Test("color transform matches")
+    func color() {
+        var generator: Generator = .init(seed: 0xC0FFEE)
+
+        // Zero is 8-bit, four is the 12-bit path. The negative ones are formats
+        // narrower than a byte, which are rare but reachable, and shift the
+        // other way — the direction a kernel written for the common case gets
+        // wrong.
+        for shift: Int32 in [0, 4, 8, -1, -2] {
+            for count: Int in 1 ... 40 {
+                let interleaved: [UInt16] = (0 ..< 3 * count).map { _ in
+                    .init(truncatingIfNeeded: generator.next())
+                }
+
+                var fast: [UInt8] = []
+                Self.accelerated { installed in
+                    guard installed != "portable" else {
+                        return
+                    }
+                    fast = Self.converted(interleaved, shift: shift, padding: 16)
+                }
+                guard !fast.isEmpty else {
+                    return
+                }
+
+                let portable: [UInt8] = Self.converted(
+                    interleaved, shift: shift, padding: 16
+                )
+                #expect(fast == portable, "shift \(shift), \(count) pixels")
+            }
+        }
+    }
+
     /// A whole image must decode identically either way.
     ///
     /// The block tests above cover the arithmetic; this covers the wiring —
