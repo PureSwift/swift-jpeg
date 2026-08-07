@@ -89,6 +89,34 @@ int main(void)
     check(tj3Get(decompressor, TJPARAM_SUBSAMP) == TJSAMP_420, "subsampling round trips");
     check(tj3Get(decompressor, TJPARAM_PRECISION) == 8, "precision is 8");
 
+    /* The header call reads markers and stops; the decompress call decodes the
+     * image. They therefore fill in what they report from two different places,
+     * and a caller who skips the header call — which is legal — has to see the
+     * same answers as one who makes it. Checked on a separate handle so that
+     * nothing the header call left behind can be what makes them agree. */
+    printf("the header call and the decompress call agree\n");
+    tjhandle alone = tj3Init(TJINIT_DECOMPRESS);
+    check(alone != NULL, "a second decompressor initializes");
+    check(tj3Decompress8(alone, jpeg, jpegSize, result, 0, TJPF_RGB) == 0,
+          "decompressing without a header call succeeds");
+    static const struct { int id; const char *name; } reported[] = {
+        { TJPARAM_JPEGWIDTH,  "width" },
+        { TJPARAM_JPEGHEIGHT, "height" },
+        { TJPARAM_SUBSAMP,    "subsampling" },
+        { TJPARAM_PRECISION,  "precision" },
+        { TJPARAM_COLORSPACE, "colorspace" },
+        { TJPARAM_PROGRESSIVE, "progressive" },
+        { TJPARAM_LOSSLESS,   "lossless" },
+        { TJPARAM_ARITHMETIC, "arithmetic" },
+    };
+    for (size_t i = 0; i < sizeof reported / sizeof *reported; i++) {
+        char label[64];
+        snprintf(label, sizeof label, "%s matches", reported[i].name);
+        check(tj3Get(alone, reported[i].id) == tj3Get(decompressor, reported[i].id),
+              label);
+    }
+    tj3Destroy(alone);
+
     printf("decompress\n");
     rc = tj3Decompress8(decompressor, jpeg, jpegSize, result, 0, TJPF_RGB);
     if (rc != 0) printf("        (%s)\n", tj3GetErrorStr(decompressor));
