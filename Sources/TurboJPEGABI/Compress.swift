@@ -92,28 +92,61 @@ public func tj3Compress8(
             count: .init(width) * .init(height) * planes
         )
 
-        for y: Int in 0 ..< Int(height) {
-            let row: UnsafePointer<UInt8> = srcBuf + y * stride
-            for x: Int in 0 ..< Int(width) {
-                let pixel: UnsafePointer<UInt8> = row + x * format.size
-                let base: Int = (y * .init(width) + x) * planes
-                if gray {
-                    values[base] = format.isGray
-                        ? .init(pixel[0])
-                        : .init(JPEG.YCbCr(
-                            .init(pixel[format.red], pixel[format.green], pixel[format.blue])
-                        ).y)
+        // The channel offsets and the pixel size are properties of the format,
+        // not of the pixel, and which of the three conversions applies is fixed
+        // for the whole image. Reading them inside the loop meant a megapixel
+        // image resolved them three million times and took a branch it already
+        // knew the answer to on every pixel.
+        let red: Int = format.red
+        let green: Int = format.green
+        let blue: Int = format.blue
+        let size: Int = format.size
+        let packed: Bool = format.isGray
+
+        values.withUnsafeMutableBufferPointer { values in
+            for y: Int in 0 ..< Int(height) {
+                let row: UnsafePointer<UInt8> = srcBuf + y * stride
+                var base: Int = y * .init(width) * planes
+
+                if gray, packed {
+                    // Already luminance, whatever the JPEG will call it.
+                    for x: Int in 0 ..< Int(width) {
+                        values[base] = .init(row[x * size])
+                        base += planes
+                    }
+                } else if gray {
+                    for x: Int in 0 ..< Int(width) {
+                        let pixel: UnsafePointer<UInt8> = row + x * size
+                        values[base] = .init(
+                            JPEG.YCbCr(
+                                .init(pixel[red], pixel[green], pixel[blue])
+                            ).y
+                        )
+                        base += planes
+                    }
                 } else if lossless {
-                    values[base] = .init(pixel[format.red])
-                    values[base + 1] = .init(pixel[format.green])
-                    values[base + 2] = .init(pixel[format.blue])
+                    for x: Int in 0 ..< Int(width) {
+                        let pixel: UnsafePointer<UInt8> = row + x * size
+                        values[base] = .init(pixel[red])
+                        values[base + 1] = .init(pixel[green])
+                        values[base + 2] = .init(pixel[blue])
+                        base += 3
+                    }
                 } else {
-                    let color: JPEG.YCbCr = .init(
-                        .init(pixel[format.red], pixel[format.green], pixel[format.blue])
+                    // Through the kernel seam, a row at a time, so a processor
+                    // with a vector unit converts eight pixels at a time. A row
+                    // rather than the whole image because the caller's rows may
+                    // be padded to a pitch, and the kernel takes a run of
+                    // pixels at a fixed spacing.
+                    JPEG.Kernel.forwardColorTransform(
+                        row,
+                        .init(size),
+                        .init(red),
+                        .init(green),
+                        .init(blue),
+                        .init(width),
+                        values.baseAddress! + base
                     )
-                    values[base] = .init(color.y)
-                    values[base + 1] = .init(color.cb)
-                    values[base + 2] = .init(color.cr)
                 }
             }
         }
