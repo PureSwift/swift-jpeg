@@ -35,6 +35,34 @@ extension JPEG.Data {
                 self.buffer.withUnsafeMutableBufferPointer { body($0) }
             }
 
+            /// Runs `body` on this plane's samples through a raw pointer.
+            ///
+            /// The resampling loops use this rather than the `Span` accessor
+            /// below, and the reason is measured rather than assumed. A `Span`
+            /// subscript is bounds checked, and in these loops the check is not
+            /// eliminated: the index is computed from a clamped column plus a row
+            /// offset, and the optimizer cannot prove that sum is in range. It
+            /// costs a compare and a branch per access — counted under callgrind
+            /// on the shape of the upsampler's inner loop, 30% more instructions
+            /// for four reads and a write per output, and 60% more on a plain
+            /// strided copy where the arithmetic is cheaper and the check is
+            /// therefore a larger share of it.
+            ///
+            /// So the rule in this file is: a `Span` everywhere the cost is
+            /// amortized over real work, a pointer in the per-sample loops. The
+            /// spelling says which is which, and this one says `unsafe` because
+            /// it is.
+            func withUnsafeSamples<T>(_ body: (UnsafeBufferPointer<UInt16>) -> T) -> T {
+                self.buffer.withUnsafeBufferPointer(body)
+            }
+
+            /// Runs `body` on this plane's samples through a raw mutable pointer.
+            mutating func withUnsafeMutableSamples<T>(
+                _ body: (UnsafeMutableBufferPointer<UInt16>) -> T
+            ) -> T {
+                self.buffer.withUnsafeMutableBufferPointer { body($0) }
+            }
+
             /// Copies an `n`×`n` block of samples in at `(x, y)`.
             ///
             /// A block at a time rather than a sample at a time, so the bounds
