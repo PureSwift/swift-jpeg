@@ -39,6 +39,27 @@ extension JPEG {
             _ coefficients: UnsafeMutablePointer<Int32>
         ) -> Void
 
+        /// Converts interleaved YCbCr samples to packed 8-bit RGB.
+        ///
+        /// The whole image in one call rather than a pixel or a row at a time.
+        /// A per-pixel seam would spend more on the indirect call than on the
+        /// nine multiplies it dispatches to, and a vector kernel needs a run of
+        /// pixels to be worth entering at all.
+        ///
+        /// -   Parameters:
+        ///     -   interleaved: `3 * count` samples: y, cb, cr per pixel.
+        ///     -   count: The number of pixels.
+        ///     -   shift: How far to shift a sample right to narrow it to eight
+        ///         bits. Negative shifts left. Samples are truncated to eight
+        ///         bits after shifting, not clamped.
+        ///     -   rgb: Where to write `3 * count` bytes: r, g, b per pixel.
+        public typealias ColorTransform = @convention(c) (
+            _ interleaved: UnsafePointer<UInt16>,
+            _ count: Int,
+            _ shift: Int32,
+            _ rgb: UnsafeMutablePointer<UInt8>
+        ) -> Void
+
         /// The inverse transform in use.
         ///
         /// Assign before decoding. Replacing it while a decode is in flight is
@@ -52,6 +73,10 @@ extension JPEG {
         /// The forward transform in use.
         public nonisolated(unsafe)
         static var forwardTransform: ForwardTransform = Self.portableForward
+
+        /// The color transform in use.
+        public nonisolated(unsafe)
+        static var colorTransform: ColorTransform = Self.portableColor
 
         /// A description of the installed kernels, for diagnostics.
         ///
@@ -82,6 +107,28 @@ extension JPEG.Kernel {
         )
     }
 
+    /// The portable color transform.
+    ///
+    /// Kept here rather than in `Format.swift` so that this file holds the
+    /// definition every accelerated kernel has to agree with, and so that the
+    /// arithmetic a vector kernel reimplements can be read against it in one
+    /// place.
+    private static let portableColor: ColorTransform = { interleaved, count, shift, rgb in
+        let scale: Int = .init(shift)
+        for i: Int in 0 ..< count {
+            let base: Int = 3 * i
+            let color: JPEG.YCbCr = .init(
+                y: JPEG.YCbCr.narrow(interleaved[base], by: scale),
+                cb: JPEG.YCbCr.narrow(interleaved[base + 1], by: scale),
+                cr: JPEG.YCbCr.narrow(interleaved[base + 2], by: scale)
+            )
+            let pixel: JPEG.RGB = color.rgb
+            rgb[base] = pixel.r
+            rgb[base + 1] = pixel.g
+            rgb[base + 2] = pixel.b
+        }
+    }
+
     /// Restores the portable kernels.
     ///
     /// Mainly for tests, which need to check an accelerated kernel against the
@@ -89,6 +136,7 @@ extension JPEG.Kernel {
     public static func reset() {
         Self.inverseTransform = Self.portableInverse
         Self.forwardTransform = Self.portableForward
+        Self.colorTransform = Self.portableColor
         Self.description = "portable"
     }
 }
