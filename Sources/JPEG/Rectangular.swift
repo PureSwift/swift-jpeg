@@ -108,6 +108,25 @@ extension JPEG.Data.Planar {
         (((2 * x + 1) * numerator) << 16) / (2 * denominator) - (1 << 15)
     }
 
+    /// Blends the four samples around an output position.
+    ///
+    /// 32-bit intermediates: a sample is at most 16 bits and a fraction at most
+    /// 16, so the products fit with room to spare.
+    ///
+    /// Factored out so that the two loops below — one reading its columns from a
+    /// table, one walking them — are demonstrably the same arithmetic. The
+    /// upsampler is the one place in the decoder where two implementations of a
+    /// formula coexist, and they have to agree bit for bit or the fast one is
+    /// simply a different filter.
+    @inline(__always)
+    private static func blend(
+        _ a: Int32, _ b: Int32, _ c: Int32, _ d: Int32, fx: Int32, fy: Int32
+    ) -> UInt16 {
+        let top: Int32 = (a << 8) + ((b - a) * fx >> 8)
+        let bottom: Int32 = (c << 8) + ((d - c) * fx >> 8)
+        return .init(((top << 8) + ((bottom - top) * fy >> 8) + (1 << 15)) >> 16)
+    }
+
     /// Upsamples and interleaves this image to full resolution.
     ///
     /// A component sampled as densely as the frame is copied verbatim. A
@@ -171,6 +190,23 @@ extension JPEG.Data.Planar {
                 rights[x] = Swift.min(Swift.max(column + 1, 0), extent.x - 1)
                 fractions[x] = .init(u - (column << 16))
             }
+            // A component sampled at exactly half the frame's density — 4:2:0
+            // and 4:2:2 chroma, which is nearly every subsampled image there is.
+            // Halving makes the column pattern repeat every two output pixels
+            // and makes a pair of them share their middle source sample, both
+            // of which the general loop has no way to know.
+            let halved: Bool = 2 * sampling.x == scale.x
+
+            // The output columns where neither source column of either pixel of
+            // a pair is clamped. Outside it the interpolation reaches past the
+            // plane, and the clamps the tables have folded in are needed.
+            let interior: Range<Int>
+            if halved, extent.x >= 3, Swift.min(width, 2 * (extent.x - 1)) >= 2 {
+                interior = 2 ..< Swift.min(width, 2 * (extent.x - 1))
+            } else {
+                interior = 0 ..< 0
+            }
+
             source.withSamples { samples in
               values.withUnsafeMutableBufferPointer { values in
                 lefts.withUnsafeBufferPointer { lefts in
@@ -189,28 +225,61 @@ extension JPEG.Data.Planar {
                         let above: Int = Swift.min(Swift.max(row, 0), extent.y - 1) * extent.x
                         let below: Int = Swift.min(Swift.max(row + 1, 0), extent.y - 1) * extent.x
 
-                        var output: Int = y * width * stride + plane
-                        for x: Int in 0 ..< width {
+                        /// One output pixel, reading its columns from the tables
+                        /// so that the clamps at the plane's edges are already
+                        /// folded in. Correct everywhere, and the only path for
+                        /// any ratio other than a halving.
+                        @inline(__always)
+                        func tabulated(_ x: Int) -> UInt16 {
                             let left: Int = lefts[x]
                             let right: Int = rights[x]
-                            let fx: Int32 = fractions[x]
+                            return Self.blend(
+                                .init(samples[above + left]),
+                                .init(samples[above + right]),
+                                .init(samples[below + left]),
+                                .init(samples[below + right]),
+                                fx: fractions[x],
+                                fy: fy
+                            )
+                        }
 
-                            // 32-bit intermediates: a sample is at most 16 bits
-                            // and a fraction at most 16, so the products fit
-                            // with room to spare and the 64-bit arithmetic this
-                            // used before was pure overhead.
-                            let a: Int32 = .init(samples[above + left])
-                            let b: Int32 = .init(samples[above + right])
-                            let c: Int32 = .init(samples[below + left])
-                            let d: Int32 = .init(samples[below + right])
-
-                            let top: Int32 = (a << 8) + ((b - a) * fx >> 8)
-                            let bottom: Int32 = (c << 8) + ((d - c) * fx >> 8)
-                            let value: Int32 =
-                                ((top << 8) + ((bottom - top) * fy >> 8) + (1 << 15)) >> 16
-
-                            values[output] = .init(value)
+                        var output: Int = y * width * stride + plane
+                        var x: Int = 0
+                        while x < interior.lowerBound {
+                            values[output] = tabulated(x)
                             output += stride
+                            x += 1
+                        }
+
+                        // Two output pixels at a time. Under a halving the even
+                        // pixel interpolates source columns k-1 and k at three
+                        // quarters and the odd one columns k and k+1 at one
+                        // quarter, so a pair costs three loads from each row
+                        // rather than four, the fractions are constants rather
+                        // than a third table, and the walk over the source row
+                        // is sequential instead of indexed.
+                        var k: Int = x >> 1
+                        while x + 1 < interior.upperBound {
+                            let a: Int32 = .init(samples[above + k - 1])
+                            let b: Int32 = .init(samples[above + k])
+                            let c: Int32 = .init(samples[below + k - 1])
+                            let d: Int32 = .init(samples[below + k])
+                            values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
+                            output += stride
+
+                            let e: Int32 = .init(samples[above + k + 1])
+                            let f: Int32 = .init(samples[below + k + 1])
+                            values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
+                            output += stride
+
+                            k += 1
+                            x += 2
+                        }
+
+                        while x < width {
+                            values[output] = tabulated(x)
+                            output += stride
+                            x += 1
                         }
                     }
                     }
