@@ -180,7 +180,7 @@ extension JPEG.Data.Planar {
                 // and keep the samples bit-exact. This is the luma plane of
                 // every subsampled image, so it is a million samples on a
                 // megapixel image and worth writing through a raw pointer.
-                source.withSamples { samples in
+                source.withUnsafeSamples { samples in
                     values.withUnsafeMutableBufferPointer { values in
                         for y: Int in 0 ..< height {
                             var output: Int = y * width * stride + plane
@@ -225,7 +225,7 @@ extension JPEG.Data.Planar {
                 interior = 0 ..< 0
             }
 
-            source.withSamples { samples in
+            source.withUnsafeSamples { samples in
               values.withUnsafeMutableBufferPointer { values in
                 lefts.withUnsafeBufferPointer { lefts in
                   rights.withUnsafeBufferPointer { rights in
