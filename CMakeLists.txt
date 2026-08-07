@@ -76,9 +76,16 @@ add_library(CCPUFeatures STATIC Sources/CCPUFeatures/cpufeatures.c)
 target_include_directories(CCPUFeatures PUBLIC ${CCPU_INCLUDE_DIR})
 set_target_properties(CCPUFeatures PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Listed rather than globbed, unlike the Swift modules above, because the two
+# kernels for an architecture have to be added in pairs and a list makes a
+# missing one obvious. Forgetting one is not a build error where it is written —
+# it is an undefined reference at the point the shared library is linked, which
+# is the far end of the build and names a mangled Swift symbol.
 add_library(CJPEGAccel STATIC
     Sources/CJPEGAccel/transforms_avx2.c
-    Sources/CJPEGAccel/transforms_neon.c)
+    Sources/CJPEGAccel/transforms_neon.c
+    Sources/CJPEGAccel/color_avx2.c
+    Sources/CJPEGAccel/color_neon.c)
 target_include_directories(CJPEGAccel PUBLIC ${CACCEL_INCLUDE_DIR})
 target_link_libraries(CJPEGAccel PUBLIC CCPUFeatures)
 set_target_properties(CJPEGAccel PROPERTIES POSITION_INDEPENDENT_CODE ON)
