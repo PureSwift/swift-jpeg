@@ -168,10 +168,12 @@ transformation. Point `LD_LIBRARY_PATH` at a
 real libjpeg-turbo instead and both should behave identically; that comparison
 is why they are C rather than more Swift tests.
 
-Not implemented, and refused rather than approximated: scaled decompression,
-cropping, custom coefficient filters, image file loading and saving, ICC
-profiles, and 12- or 16-bit precision. A request for any of them fails through the API's own error
-convention.
+Scaled decompression, cropping, custom coefficient filters, image file loading
+and saving, ICC profiles, lossless transformation, and 12- and 16-bit precision
+are all implemented and covered by those programs. What is still refused rather
+than approximated is the legacy `tjDecompress` spelling of scaled decompression,
+which takes an arbitrary output size rather than one of the scaling factors the
+modern API enumerates. Refusals go through the API's own error convention.
 
 TurboJPEG is a good substitution target where the libjpeg API is not. `tjhandle`
 is `void *`, so the handle is genuinely opaque and the engine can own its own
@@ -188,27 +190,34 @@ name, but older binaries did bind to that symbol, so both are implemented.
 ## Performance
 
 Honest numbers, measured on a 1024×1024 4:2:0 image against the system
-libjpeg-turbo on the same machine, through the C ABI in both cases:
+libjpeg-turbo on the same machine, both through a C ABI:
 
 | | decode | | encode | |
 | --- | --- | --- | --- | --- |
-| libjpeg-turbo | 0.0052 s | 201 Mpixel/s | 0.0045 s | 236 Mpixel/s |
-| swift-jpeg | 0.045 s | 23 Mpixel/s | 0.064 s | 16 Mpixel/s |
+| libjpeg-turbo | 0.0056 s | 187 Mpixel/s | 0.0046 s | 228 Mpixel/s |
+| swift-jpeg | 0.0436 s | 24 Mpixel/s | 0.0416 s | 25 Mpixel/s |
 
-So roughly **9× slower on decode and 14× on encode**, from 310× before any
+So roughly **8× slower on decode and 9× on encode**, from 310× before any
 optimization work.
 
-Two kinds of thing produced that. The first was structural: a lexer that consumed
-from the front of an array and so cost time quadratic in the file size, a heap
-allocation per byte of entropy coded data, four allocations per 8×8 block, and
-bounds-checked subscripting in the per-pixel loops. The second was algorithmic —
-a Huffman decode table that resolves any code of eight bits or fewer in one step,
-the factored inverse and forward transforms, which need 11 multiplies per
-8-point transform where writing the definition out costs 64, and a subsampler
-that no longer performs two integer divisions per output sample to discover that
-it is averaging a single one.
+Three kinds of thing produced that. The first was structural: a lexer that
+consumed from the front of an array and so cost time quadratic in the file size,
+a heap allocation per byte of entropy coded data, and four allocations per 8×8
+block. The second was algorithmic — a Huffman decode table that resolves any code
+of eight bits or fewer in one step, and the factored transforms, which need 11
+multiplies per 8-point transform where writing the definition out costs 64.
 
-The remaining gap is mostly SIMD, and part of it is now closed. `JPEG.Kernel`
+The third was specialization: writing out the cases every real image actually
+hits, where the general code paid for generality on every sample. The subsampler
+performed two integer divisions per output sample to discover it was averaging a
+single one, which alone was the largest cost in the encoder. The upsampler read
+two columns and a fraction from three tables per pixel where a halved ratio makes
+the pattern repeat every two. And `tj3DecompressHeader` ran a full decode and
+threw the image away, so a caller following the documented pattern of header then
+decompress paid for two decodes to get one image — the shared library was very
+nearly half as fast as the code inside it.
+
+What is left is mostly SIMD, and a good deal of it is now closed. `JPEG.Kernel`
 is a seam of function pointers that default to the portable Swift kernels; the
 `JPEGAccelerate` module detects the processor with `cpuid` and replaces the ones
 it has a faster path for. The C ABI installs them when it creates its first
@@ -216,26 +225,37 @@ handle, so the shared library is as fast as the machine allows without being
 asked; the Swift package leaves the choice to the caller, who may prefer the
 engine's discipline to the import.
 
-| | portable | avx2 |
-| --- | --- | --- |
-| inverse transform | 0.0110 s | 0.0063 s |
-| forward transform + quantize | 0.0197 s | 0.0152 s |
-| decode, end to end | 0.0446 s | 0.0395 s |
-| encode, end to end | 0.0625 s | 0.0572 s |
+| | portable | avx2 | |
+| --- | --- | --- | --- |
+| inverse transform, 16384 blocks | 0.0038 s | 0.0007 s | 5.8× |
+| forward transform, 16384 blocks | 0.0031 s | 0.0007 s | 4.7× |
+| YCbCr to RGB, 1 Mpixel | 0.0091 s | 0.0016 s | 5.9× |
+| color to YCbCr, 1 Mpixel | 0.0081 s | 0.0016 s | 5.1× |
+| decode, end to end | 0.0554 s | 0.0429 s | 1.29× |
+| encode, end to end | 0.0480 s | 0.0437 s | 1.10× |
 
-The transform *kernels* are about 5× — 16384 blocks streamed through memory go
-from 0.0041 s to 0.0008 s. The phases above move by less than that, and the gap
-is the point: the phase called "inverse transform" also dequantizes, gathers
-each block and writes the samples back out, and none of that is vectorized. The
-transform is about half of it, which is why halving the transform four times
-over moves the phase by 1.75×. End to end it is 8–11%, because the transforms
-are a quarter of the pipeline.
+Reproduce both rows of that table with `swift run -c release jpeg-benchmark` and
+`swift run -c release jpeg-benchmark --portable`.
 
-The kernels are bit-exact against the portable ones — over 8192 blocks in both
-directions on x86-64, and 2048 on AArch64. Exact, not within a count: both run
-the same factorization with the same constants, so any disagreement at all
-would mean a lane is being computed differently rather than rounded
-differently.
+The kernels are 5× and the pipeline is 1.1–1.3×, and the gap between those two
+numbers is the honest part. A kernel measured on its own is 5× because that is
+what vectorizing nine multiplies gets you; end to end the transforms and the
+colour conversion are together about a third of the work, and the rest —
+entropy coding above all, which is inherently serial — is untouched. The
+end-to-end encode figure moves least because the benchmark's encoder is handed
+YCbCr samples and so never calls the colour kernel at all; through the C ABI,
+where the caller hands over pixels, that kernel is worth another 8 ms.
+
+The kernels are bit-exact against the portable ones. The transforms are checked
+over 8192 blocks in each direction, and the two colour kernels exhaustively —
+all 16777216 inputs each, at every channel arrangement and every partial-vector
+length. Exact rather than within a count, in both cases for a specific reason:
+the transforms run the same factorization with the same constants, so any
+disagreement would mean a lane is being computed differently rather than rounded
+differently, and colour conversion is a single fixed-point matrix with a single
+rounding, so a disagreement of one count would not be rounding at all — it would
+be a tint on every pixel of every image, visible only to users of whichever
+processor selected that kernel.
 
 They are written as C intrinsics with a function-level `target` attribute rather
 than as assembly or a separately-flagged compilation unit. The attribute is what
@@ -303,10 +323,20 @@ derives from the same canonical rule the decoder reconstructs independently. The
 drift ceiling is calibrated against libjpeg-turbo doing the identical
 decode-then-re-encode, which drifts more than this encoder does.
 
-Two gaps worth naming. Extended sequential frames (`SOF1`) take the same code
-path as baseline but no fixture exercises them, because neither ImageMagick nor
-Pillow will emit one. Nothing covers 12- or 16-bit precision, which the
-TurboJPEG ABI will eventually require, for the same reason.
+One gap worth naming. Extended sequential frames (`SOF1`) take the same code path
+as baseline but no fixture exercises them, because neither ImageMagick nor Pillow
+will emit one.
+
+12- and 16-bit precision are covered from the C side rather than by fixtures, by
+round-tripping through `tj3Compress12`/`tj3Decompress12` and their 16-bit
+counterparts — there is no reference decoder to hand for those, but a round trip
+still catches a path that only works at 8 bits. It found one: the upsampler built
+an intermediate that overflows a signed 32-bit value once a sample is wider than
+about 13 bits, and because the overflow happened in a shift, which discards what
+it pushes out rather than trapping, the value wrapped negative and trapped one
+step later on a conversion. `ResampleTests` now holds that case with the hard
+chroma edge that provokes it; a gradient does not, since the overflow needs the
+largest possible difference between neighbouring samples.
 
 ## License
 
