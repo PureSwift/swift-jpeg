@@ -302,12 +302,36 @@ extension JPEG.RGB: JPEG.Color {
             }
 
         case .ycc:
-            // Fused. Converting via `JPEG.YCbCr.unpack` first would be the same
-            // arithmetic, but it would materialize a whole second image between
-            // the two steps — on a megapixel that is a megapixel of allocation
-            // and a second pass over it, for nothing.
-            return Self.convert(interleaved, scale: scale) {
-                JPEG.YCbCr(y: $0, cb: $1, cr: $2).rgb
+            // Through the kernel seam, so a processor with a vector unit
+            // converts eight pixels at a time. Fused either way: converting via
+            // `JPEG.YCbCr.unpack` first would be the same arithmetic, but it
+            // would materialize a whole second image between the two steps — on
+            // a megapixel that is a megapixel of allocation and a second pass
+            // over it, for nothing.
+            //
+            // The kernel writes bytes into an array of `RGB`, which is sound
+            // because `RGB` is three `UInt8` fields and so an array of them
+            // already *is* packed bytes. That is checked rather than assumed:
+            // the language does not promise a three-byte stride, and under a
+            // padded one the kernel would scatter every pixel across the wrong
+            // bytes — silently, and only on whichever platform padded it.
+            let count: Int = interleaved.count / 3
+            guard count > 0, MemoryLayout<Self>.stride == 3 else {
+                return Self.convert(interleaved, scale: scale) {
+                    JPEG.YCbCr(y: $0, cb: $1, cr: $2).rgb
+                }
+            }
+            return .init(unsafeUninitializedCapacity: count) { output, initialized in
+                interleaved.withUnsafeBufferPointer { input in
+                    JPEG.Kernel.colorTransform(
+                        input.baseAddress!,
+                        count,
+                        .init(scale),
+                        UnsafeMutableRawPointer(output.baseAddress!)
+                            .assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+                initialized = count
             }
 
         case .y, .nonconforming:
