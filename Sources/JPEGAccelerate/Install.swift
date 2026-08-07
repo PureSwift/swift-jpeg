@@ -41,10 +41,12 @@ extension JPEG {
             if jpeg_accel_avx2_available() != 0 {
                 JPEG.Kernel.inverseTransform = jpeg_accel_idct8_avx2
                 JPEG.Kernel.forwardTransform = jpeg_accel_fdct8_avx2
+                JPEG.Kernel.colorTransform = jpeg_accel_ycc_to_rgb_avx2
                 JPEG.Kernel.description = "avx2"
             } else if jpeg_accel_neon_available() != 0 {
                 JPEG.Kernel.inverseTransform = jpeg_accel_idct8_neon
                 JPEG.Kernel.forwardTransform = jpeg_accel_fdct8_neon
+                JPEG.Kernel.colorTransform = jpeg_accel_ycc_to_rgb_neon
                 JPEG.Kernel.description = "neon"
             } else {
                 JPEG.Kernel.reset()
