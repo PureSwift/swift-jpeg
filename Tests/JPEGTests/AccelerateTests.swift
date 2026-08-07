@@ -45,8 +45,12 @@ struct AccelerateTests {
     func detection() {
         let features: [String] = JPEG.Accelerate.features
         Self.accelerated { installed in
+            // The order has to match the order `install` prefers them in, not
+            // just the set of things the processor can do.
             if features.contains("avx2") {
                 #expect(installed == "avx2")
+            } else if features.contains("neon") {
+                #expect(installed == "neon")
             } else {
                 // No accelerated kernel for this processor is a correct
                 // outcome, not a skipped test: the portable path is the
