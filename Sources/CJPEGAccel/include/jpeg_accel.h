@@ -88,4 +88,30 @@ void jpeg_accel_ycc_to_rgb_neon(const uint16_t *JPEG_NONNULL interleaved,
                                 int32_t shift,
                                 uint8_t *JPEG_NONNULL rgb);
 
+/* `count` packed pixels to `count` interleaved YCbCr samples.
+ *
+ * Reads count * size uint8_t and writes 3 * count uint16_t. The pixels are
+ * `size` bytes apart and the three channels sit at `red`, `green` and `blue`
+ * within one, which is what lets a caller's own pixel order be converted in
+ * place rather than copied into RGB order first.
+ *
+ * Exact against the portable arithmetic, for the same reason as the decoding
+ * direction: one fixed-point matrix with one rounding.
+ */
+void jpeg_accel_rgb_to_ycc_avx2(const uint8_t *JPEG_NONNULL pixels,
+                                int32_t size,
+                                int32_t red,
+                                int32_t green,
+                                int32_t blue,
+                                ptrdiff_t count,
+                                uint16_t *JPEG_NONNULL interleaved);
+
+void jpeg_accel_rgb_to_ycc_neon(const uint8_t *JPEG_NONNULL pixels,
+                                int32_t size,
+                                int32_t red,
+                                int32_t green,
+                                int32_t blue,
+                                ptrdiff_t count,
+                                uint16_t *JPEG_NONNULL interleaved);
+
 #endif
