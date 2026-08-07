@@ -60,6 +60,36 @@ extension JPEG {
             _ rgb: UnsafeMutablePointer<UInt8>
         ) -> Void
 
+        /// Converts packed 8-bit color to interleaved YCbCr samples.
+        ///
+        /// The encoding direction of ``ColorTransform``, and the same shape of
+        /// work: nine multiplies and three clamps per pixel with no dependency
+        /// between pixels.
+        ///
+        /// The channel offsets are parameters because a caller handing pixels
+        /// to a JPEG encoder has them in whatever order their own framework
+        /// uses, and copying a megapixel image into RGB order first to satisfy
+        /// this would cost more than the conversion.
+        ///
+        /// -   Parameters:
+        ///     -   pixels: `count` pixels, `size` bytes apart.
+        ///     -   size: The distance between pixels, in bytes.
+        ///     -   red: The offset of the red channel within a pixel.
+        ///     -   green: The offset of the green channel.
+        ///     -   blue: The offset of the blue channel.
+        ///     -   count: The number of pixels.
+        ///     -   interleaved: Where to write `3 * count` samples: y, cb, cr
+        ///         per pixel.
+        public typealias ForwardColorTransform = @convention(c) (
+            _ pixels: UnsafePointer<UInt8>,
+            _ size: Int32,
+            _ red: Int32,
+            _ green: Int32,
+            _ blue: Int32,
+            _ count: Int,
+            _ interleaved: UnsafeMutablePointer<UInt16>
+        ) -> Void
+
         /// The inverse transform in use.
         ///
         /// Assign before decoding. Replacing it while a decode is in flight is
@@ -77,6 +107,10 @@ extension JPEG {
         /// The color transform in use.
         public nonisolated(unsafe)
         static var colorTransform: ColorTransform = Self.portableColor
+
+        /// The encoding color transform in use.
+        public nonisolated(unsafe)
+        static var forwardColorTransform: ForwardColorTransform = Self.portableForwardColor
 
         /// A description of the installed kernels, for diagnostics.
         ///
@@ -129,6 +163,25 @@ extension JPEG.Kernel {
         }
     }
 
+    /// The portable encoding color transform.
+    private static let portableForwardColor: ForwardColorTransform = {
+        pixels, size, red, green, blue, count, interleaved in
+        let size: Int = .init(size)
+        let red: Int = .init(red)
+        let green: Int = .init(green)
+        let blue: Int = .init(blue)
+        for i: Int in 0 ..< count {
+            let pixel: UnsafePointer<UInt8> = pixels + i * size
+            let color: JPEG.YCbCr = .init(
+                .init(pixel[red], pixel[green], pixel[blue])
+            )
+            let base: Int = 3 * i
+            interleaved[base] = .init(color.y)
+            interleaved[base + 1] = .init(color.cb)
+            interleaved[base + 2] = .init(color.cr)
+        }
+    }
+
     /// Restores the portable kernels.
     ///
     /// Mainly for tests, which need to check an accelerated kernel against the
@@ -137,6 +190,7 @@ extension JPEG.Kernel {
         Self.inverseTransform = Self.portableInverse
         Self.forwardTransform = Self.portableForward
         Self.colorTransform = Self.portableColor
+        Self.forwardColorTransform = Self.portableForwardColor
         Self.description = "portable"
     }
 }
