@@ -18,34 +18,51 @@ extension JPEG {
 }
 
 extension JPEG.Data {
+    /// One component's coefficients.
+    ///
+    /// Spelled ``Spectral/Plane`` everywhere it is used, and that is the name to
+    /// use. It lives out here, rather than nested inside ``Spectral`` where it
+    /// reads more naturally, because it does not mention `Format` and nesting it
+    /// would make it pay for the generic parameter anyway.
+    ///
+    /// `Spectral<A>.Plane` and `Spectral<B>.Plane` would be two distinct types of
+    /// identical layout, and neither one's metadata could be emitted at compile
+    /// time by a caller that does not know the format. The entropy decoder
+    /// touches a plane once per block, so every block instantiated the metadata
+    /// for this type and for the array holding it — a cache lookup in the Swift
+    /// runtime, about a thousand instructions, for a type that turns out not to
+    /// vary. That came to 31M instructions per megapixel image, 19% of the
+    /// entropy decode, spent entirely on discovering the same answer 24576 times.
+    public struct SpectralPlane {
+        /// The plane's size, in 8×8 blocks.
+        public let blocks: (x: Int, y: Int)
+        /// The quantization table slot this plane's coefficients were
+        /// quantized with.
+        public var quanta: JPEG.Table.Quantization.Key
+
+        /// Coefficients, block-major: all 64 of one block, then the next.
+        ///
+        /// Block-major rather than plane-major because every consumer —
+        /// entropy coding, dequantization, the inverse DCT — works one
+        /// whole block at a time, so this is the layout that keeps them
+        /// touching contiguous memory.
+        ///
+        /// `Int16` matches libjpeg's coefficient type. T.81 caps a
+        /// magnitude category at 15, so a coefficient cannot exceed
+        /// 32767 and cannot overflow this.
+        private var buffer: [Int16]
+
+        init(blocks: (x: Int, y: Int), quanta: JPEG.Table.Quantization.Key) {
+            self.blocks = blocks
+            self.quanta = quanta
+            self.buffer = .init(repeating: 0, count: blocks.x * blocks.y * 64)
+        }
+    }
+
     /// An image as quantized DCT coefficients.
     public struct Spectral<Format> where Format: JPEG.Format {
         /// One component's coefficients.
-        public struct Plane {
-            /// The plane's size, in 8×8 blocks.
-            public let blocks: (x: Int, y: Int)
-            /// The quantization table slot this plane's coefficients were
-            /// quantized with.
-            public var quanta: JPEG.Table.Quantization.Key
-
-            /// Coefficients, block-major: all 64 of one block, then the next.
-            ///
-            /// Block-major rather than plane-major because every consumer —
-            /// entropy coding, dequantization, the inverse DCT — works one
-            /// whole block at a time, so this is the layout that keeps them
-            /// touching contiguous memory.
-            ///
-            /// `Int16` matches libjpeg's coefficient type. T.81 caps a
-            /// magnitude category at 15, so a coefficient cannot exceed
-            /// 32767 and cannot overflow this.
-            private var buffer: [Int16]
-
-            init(blocks: (x: Int, y: Int), quanta: JPEG.Table.Quantization.Key) {
-                self.blocks = blocks
-                self.quanta = quanta
-                self.buffer = .init(repeating: 0, count: blocks.x * blocks.y * 64)
-            }
-        }
+        public typealias Plane = JPEG.Data.SpectralPlane
 
         /// The planes, in layout order.
         ///
@@ -63,7 +80,7 @@ extension JPEG.Data {
     }
 }
 
-extension JPEG.Data.Spectral.Plane {
+extension JPEG.Data.SpectralPlane {
     /// Accesses the coefficient at index `z` of the block at `(x, y)`.
     ///
     /// -   Parameter z:
