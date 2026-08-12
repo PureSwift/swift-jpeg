@@ -243,10 +243,15 @@ extension JPEG.Data.Spectral {
         else {
             return
         }
-        // A block the scan codes but the plane does not contain — the padding
-        // at the right and bottom edges of a subsampled component. It is coded
-        // as all zeros, because the decoder walks the same grid and expects
+        // A block the scan codes but the plane does not contain. It is coded as
+        // all zeros, because the decoder walks the same grid and expects
         // something here.
+        //
+        // No image reaches this, for the reason the decoder's counterpart gives:
+        // `blocks(plane:)` rounds every plane up to whole MCUs, so the padding
+        // this looks like it handles is already inside the plane. It is kept in
+        // both directions because the alternative on the read side is a pointer
+        // write past the end of a block.
         guard self.planes[component.plane].contains(x: block.x, y: block.y) else {
             return try withUnsafeTemporaryAllocation(of: Int16.self, capacity: 64) {
                 (zeros) throws(JPEG.Failure) in
