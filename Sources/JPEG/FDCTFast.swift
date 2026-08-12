@@ -218,10 +218,52 @@ extension JPEG.FDCT {
         }
     }
 
+    /// Quantizes a block of coefficients without dividing.
+    ///
+    /// The same result as ``quantize(_:by:into:)`` — exactly the same, not nearly
+    /// — for any table whose reciprocal ``JPEG/Table/Quantization/reciprocal(precision:)``
+    /// was willing to build. That function explains the arithmetic and states the
+    /// bound; this one just does it.
+    ///
+    /// This is the one place in the codec where instruction counts are the wrong
+    /// measurement, and badly so. A division is a single instruction, so removing
+    /// two of them per coefficient is worth only 3.3% of the forward path under
+    /// callgrind — 168.7M against 163.1M. In wall clock the same change is worth
+    /// 31% of that path, 0.0250 s against 0.0172 s, and 21% of the whole
+    /// end-to-end encode, 0.0380 s against 0.0300 s on a megapixel image. The
+    /// gap is the divider's latency: about 25 cycles for one instruction, where
+    /// the multiply that replaces it takes three.
+    static func quantize(
+        _ coefficients: UnsafeBufferPointer<Int32>,
+        by reciprocal: JPEG.Table.Quantization.Reciprocal,
+        into levels: UnsafeMutableBufferPointer<Int16>
+    ) {
+        let shift: UInt64 = .init(JPEG.Table.Quantization.reciprocalBits)
+        reciprocal.withUnsafeEntries { entries in
+            for z: Int in 0 ..< 64 {
+                let entry: JPEG.Table.Quantization.Reciprocal.Entry = entries[z]
+                let coefficient: Int32 = coefficients[z]
+                let numerator: UInt64 = .init(coefficient.magnitude + entry.addend)
+                // Parenthesized deliberately: `>>` binds tighter than `*` in
+                // Swift, so leaving them off shifts the multiplier rather than
+                // the product and quantizes every coefficient to zero.
+                let magnitude: UInt64 = (numerator * entry.multiplier) >> shift
+                levels[z] = .init(
+                    truncatingIfNeeded: coefficient < 0
+                        ? -Int64(magnitude)
+                        : .init(magnitude)
+                )
+            }
+        }
+    }
+
     /// Quantizes a block of coefficients into a buffer the caller owns.
     ///
     /// The array-returning form allocates, and encoding a megapixel image is
     /// twenty-odd thousand blocks.
+    ///
+    /// Kept as the fallback for a table the reciprocal form will not take, and as
+    /// the definition the reciprocal form is checked against.
     static func quantize(
         _ coefficients: UnsafeBufferPointer<Int32>,
         by table: JPEG.Table.Quantization,
