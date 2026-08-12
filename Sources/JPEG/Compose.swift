@@ -239,6 +239,10 @@ extension JPEG.Data.Planar {
 
             let blocks: (x: Int, y: Int) = spectral.planes[plane].blocks
             let extent: (x: Int, y: Int) = self.planes[plane].size
+            // Once per plane, not once per block: this is what lets the inner
+            // loop multiply instead of divide.
+            let reciprocal: JPEG.Table.Quantization.Reciprocal? =
+                table.reciprocal(precision: precision)
 
             // Three scratch blocks for the whole plane. The array-returning
             // transform and quantize allocate one each per block, and a
@@ -264,9 +268,17 @@ extension JPEG.Data.Planar {
                                 .init(precision),
                                 coefficients.baseAddress!
                             )
-                            JPEG.FDCT.quantize(
-                                .init(coefficients), by: table, into: levels
-                            )
+                            if let reciprocal: JPEG.Table.Quantization.Reciprocal =
+                                reciprocal
+                            {
+                                JPEG.FDCT.quantize(
+                                    .init(coefficients), by: reciprocal, into: levels
+                                )
+                            } else {
+                                JPEG.FDCT.quantize(
+                                    .init(coefficients), by: table, into: levels
+                                )
+                            }
 
                             spectral.planes[plane].withBlockRow(by) { destination in
                                 let base: Int = bx * 64
