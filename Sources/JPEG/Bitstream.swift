@@ -96,10 +96,41 @@ extension JPEG.Bitstream {
     /// differential check against a bit-at-a-time reference that a broken refill
     /// will fail.
     ///
+    /// Three smaller things were tried on the shape below. Instruction counts for
+    /// the whole entropy decode of a megapixel 4:2:0 image, which is the figure
+    /// worth moving:
+    ///
+    /// | | instructions | |
+    /// | --- | --- | --- |
+    /// | a conditional load per byte | 211.9M | |
+    /// | the whole-window fast path below | 200.6M | −5.3% |
+    /// | that, plus `@inline(__always)` | 215.3M | +1.6% |
+    /// | that, with a 64-bit window | 204.5M | −3.5% |
+    ///
+    /// Inlining it is worse, and worse by more than the fast path is better — so
+    /// the two together measure flat, which is how the fast path nearly got
+    /// discarded. This is the opposite of ``BitstreamWriter/write(_:count:)``,
+    /// where inlining was the single largest win on the encode side; the
+    /// difference is that a write is eighteen instructions and a peek is closer
+    /// to thirty, at four call sites rather than one. Widening the window to 64
+    /// bits is also the opposite of what helped the writer's accumulator, and for
+    /// the same reason in reverse: nothing here shifts by an amount that reaches
+    /// 32, so there is no width check to make cheaper, and the wider loads and
+    /// mask just cost more.
+    ///
     /// -   Parameter count:
     ///     A bit count, at most 16 — the longest Huffman code T.81 permits.
     public func peek(_ count: Int) -> UInt16 {
         precondition(count <= 16, "cannot peek more than 16 bits")
+        // Not the special case for magnitude category 0 it looks like — that
+        // never arrives, because every caller passes 8, 1, or a category it has
+        // already found nonzero. What this earns is the *lower* bound on `count`,
+        // which the precondition above does not give: without one, `24 - (bit &
+        // 7) - count` is unbounded above, so the shift below keeps an overflow
+        // check on the subtraction, sign checks on both operands, a test that the
+        // amount fits 32 bits, and the compare-and-select that makes an
+        // over-wide shift yield zero. Nine instructions on the hot path, and
+        // 224.4M against 200.6M for the entropy decode.
         guard count > 0 else {
             return 0
         }
@@ -108,11 +139,25 @@ extension JPEG.Bitstream {
         // bits and shift the requested field down out of them.
         let start: Int = self.bit >> 3
         var window: UInt32 = 0
-        for offset: Int in 0 ..< 3 {
-            window <<= 8
-            let i: Int = start + offset
-            if i < self.bytes.count {
-                window |= .init(self.bytes[i])
+        if start + 3 <= self.bytes.count {
+            // All three bytes are present, which is every position but the last
+            // two of the interval — so one compare covers what would otherwise
+            // be a compare and a branch per byte, and the loads issue in
+            // parallel instead of behind them. The other branch still has to
+            // exist: a decoder is allowed to read past the end and get zeros,
+            // and it does, on the final block of every scan.
+            self.bytes.withUnsafeBufferPointer {
+                window = .init($0[start]) << 16
+                    | .init($0[start + 1]) << 8
+                    | .init($0[start + 2])
+            }
+        } else {
+            for offset: Int in 0 ..< 3 {
+                window <<= 8
+                let i: Int = start + offset
+                if i < self.bytes.count {
+                    window |= .init(self.bytes[i])
+                }
             }
         }
 
