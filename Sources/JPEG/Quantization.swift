@@ -168,6 +168,89 @@ extension JPEG.Table.Quantization {
         self.factors[z]
     }
 
+    /// The scale the reciprocal multipliers carry.
+    static let reciprocalBits: Int = 32
+
+    /// This table's factors rewritten as multipliers, so that quantizing a block
+    /// multiplies instead of dividing.
+    ///
+    /// Quantizing is two divisions per coefficient by a factor the compiler
+    /// cannot see, which is 20-odd cycles each on hardware that multiplies in
+    /// three. The standard fix, and libjpeg-turbo's: replace `n / d` with the
+    /// high half of `n * m` for `m = floor(2^32 / d) + 1`.
+    ///
+    /// That identity is exact, but only up to a bound — it needs `n * d < 2^32`,
+    /// and past that it starts returning a quotient one too small. So the bound
+    /// is checked here rather than assumed, once per table, against the largest
+    /// numerator a block can present: a coefficient of a `precision`-bit block is
+    /// at most `2^(precision + 2)` by T.81's own range for the FDCT, and the
+    /// round-to-nearest addend adds `factor / 2` to it.
+    ///
+    /// The check passes for every table a DCT process can carry — 8- and 12-bit
+    /// precision against every factor from 1 to 32767, with four times the
+    /// headroom at the worst pair — and it is still checked, because the bound
+    /// depends on the range the forward transform produces, and that transform is
+    /// reachable through ``JPEG/Kernel`` by code this file cannot see.
+    ///
+    /// -   Returns:
+    ///     The multipliers, or nil if any factor would make the identity
+    ///     inexact. A factor of zero also returns nil, which leaves a table that
+    ///     carries one dividing by zero exactly as it did before.
+    func reciprocal(precision: Int) -> Reciprocal? {
+        let bound: Int = 1 << (precision + 2)
+        var entries: [Reciprocal.Entry] = []
+        entries.reserveCapacity(64)
+
+        for z: Int in 0 ..< 64 {
+            let factor: Int = .init(self.factors[z])
+            guard factor > 0 else {
+                return nil
+            }
+            let addend: Int = factor / 2
+            guard (bound + addend) * factor < 1 << Self.reciprocalBits else {
+                return nil
+            }
+            entries.append(.init(
+                multiplier: (1 << UInt64(Self.reciprocalBits)) / .init(factor) + 1,
+                addend: .init(addend)
+            ))
+        }
+
+        return .init(entries: entries)
+    }
+}
+
+extension JPEG.Table.Quantization {
+    /// A quantization table in the form the encoder's inner loop wants.
+    ///
+    /// Derived once per plane by ``reciprocal(precision:)``, which is also where
+    /// the arithmetic is explained. Held as one array of pairs rather than two
+    /// arrays, so the inner loop makes one indexed access per coefficient instead
+    /// of two.
+    struct Reciprocal: Sendable {
+        /// What one coefficient's factor becomes.
+        struct Entry: Sendable {
+            /// `floor(2^reciprocalBits / factor) + 1`.
+            ///
+            /// Wider than the scale, because a factor of 1 — which quality 100
+            /// produces — makes this `2^32 + 1`.
+            let multiplier: UInt64
+            /// `factor / 2`, the round-to-nearest addend.
+            let addend: UInt32
+        }
+
+        private let entries: [Entry]
+
+        init(entries: [Entry]) {
+            self.entries = entries
+        }
+
+        /// Runs `body` on the 64 entries, without a bounds check per access.
+        func withUnsafeEntries<T>(_ body: (UnsafeBufferPointer<Entry>) -> T) -> T {
+            self.entries.withUnsafeBufferPointer(body)
+        }
+    }
+
     /// Returns this table with its two frequency axes exchanged.
     ///
     /// Required by any transform that transposes an image. Moving a
