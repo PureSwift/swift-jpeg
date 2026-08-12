@@ -104,6 +104,29 @@ extension JPEG.Data.Spectral.Plane {
         }
     }
 
+    /// Runs `body` on the 64 coefficients of the block at `(x, y)`, writably.
+    ///
+    /// The mutable counterpart of ``withBlock(x:y:_:)``, and the reason the
+    /// entropy decoder does not use the subscript. A `planes[i][x:y:z:] = v`
+    /// nests two `_modify` accesses — one on the plane array, one on the plane's
+    /// buffer — and each carries its own uniqueness check and bounds check, so a
+    /// coefficient store costs far more than the store. This pays that once per
+    /// block instead of once per coefficient.
+    ///
+    /// The block must be inside the plane; unlike the subscript, this does not
+    /// silently discard an out-of-range write. The decoder checks first, because
+    /// it has somewhere better to put the coefficients of a block the plane does
+    /// not contain.
+    mutating func withMutableBlock<T, E>(
+        x: Int, y: Int, _ body: (UnsafeMutableBufferPointer<Int16>) throws(E) -> T
+    ) throws(E) -> T {
+        let base: Int = ((y * self.blocks.x) + x) * 64
+        return try self.buffer.withUnsafeMutableBufferPointer {
+            (buffer) throws(E) in
+            try body(.init(rebasing: buffer[base ..< base + 64]))
+        }
+    }
+
     /// Whether this plane contains the block at `(x, y)`.
     ///
     /// A scan codes whole MCUs, so a subsampled component at the right or
