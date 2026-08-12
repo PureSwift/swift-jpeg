@@ -298,31 +298,38 @@ extension JPEG.Data.Spectral {
         // AC coefficients go out as run-length and magnitude pairs along the
         // zigzag. A run of more than fifteen zeros needs an explicit ZRL for
         // each full sixteen, because only four bits carry the run.
+        //
+        // The zigzag order is reached through a pointer taken once for the block,
+        // for the reason the decoder's counterpart gives — and it matters slightly
+        // more here, because this loop reads all 63 AC positions whether they are
+        // zero or not, where the decoder only reads the ones a symbol names.
         var run: Int = 0
-        for z: Int in 1 ..< 64 {
-            let value: Int = .init(coefficients[JPEG.zigzag[z]])
+        try JPEG.zigzag.withUnsafeBufferPointer { (zigzag) throws(JPEG.Failure) in
+            for z: Int in 1 ..< 64 {
+                let value: Int = .init(coefficients[zigzag[z]])
 
-            guard value != 0 else {
-                run += 1
-                continue
-            }
+                guard value != 0 else {
+                    run += 1
+                    continue
+                }
 
-            while run >= 16 {
-                try ac.encode(0xF0, to: &bits)
-                run -= 16
-            }
+                while run >= 16 {
+                    try ac.encode(0xF0, to: &bits)
+                    run -= 16
+                }
 
-            let amplitude: (category: Int, bits: UInt16) =
-                JPEG.BitstreamWriter.amplitude(of: value)
-            guard amplitude.category <= 15 else {
-                throw .encoding(.coefficientOutOfRange(value))
+                let amplitude: (category: Int, bits: UInt16) =
+                    JPEG.BitstreamWriter.amplitude(of: value)
+                guard amplitude.category <= 15 else {
+                    throw .encoding(.coefficientOutOfRange(value))
+                }
+                try ac.encode(
+                    .init(truncatingIfNeeded: run << 4 | amplitude.category),
+                    to: &bits
+                )
+                bits.write(amplitude.bits, count: amplitude.category)
+                run = 0
             }
-            try ac.encode(
-                .init(truncatingIfNeeded: run << 4 | amplitude.category),
-                to: &bits
-            )
-            bits.write(amplitude.bits, count: amplitude.category)
-            run = 0
         }
 
         // A trailing run is not coded position by position: one end-of-block
