@@ -228,13 +228,58 @@ extension JPEG.Data.Spectral {
             return
         }
 
+        // A block the scan codes but the plane does not contain. Its bits still
+        // have to be consumed, or every block after it desynchronizes, so it is
+        // decoded into scratch and dropped.
+        //
+        // No stream reaches this. `blocks(plane:)` already rounds every plane up
+        // to whole MCUs, and both unit grids the caller walks are bounded by that
+        // — 585 round trips over five samplings and thirteen widths, including
+        // every awkward size near a block and MCU boundary, never took it. It
+        // stays because the cost of being wrong changed: the plane subscript
+        // absorbed an out-of-range write by ignoring it, and a raw pointer into
+        // the block would not.
+        guard self.planes[component.plane].contains(x: block.x, y: block.y) else {
+            return try withUnsafeTemporaryAllocation(of: Int16.self, capacity: 64) {
+                (scratch) throws(JPEG.Failure) in
+                scratch.initialize(repeating: 0)
+                return try Self.decode(
+                    sequential: scratch, dc: dc, ac: ac, from: &bits, predictor: &predictor
+                )
+            }
+        }
+
+        try self.planes[component.plane].withMutableBlock(x: block.x, y: block.y) {
+            (coefficients) throws(JPEG.Failure) in
+            try Self.decode(
+                sequential: coefficients, dc: dc, ac: ac, from: &bits, predictor: &predictor
+            )
+        }
+    }
+
+    /// Decodes one sequential block into 64 coefficients.
+    ///
+    /// Writing them through a pointer rather than the plane subscript, for the
+    /// reason ``Plane/withMutableBlock(x:y:_:)`` gives: the subscript pays two
+    /// copy-on-write uniqueness checks per coefficient, and this pays them once
+    /// per block. The mirror of the encoder's static counterpart, which took the
+    /// same shape for the same reason.
+    ///
+    /// The block arrives zeroed — a plane starts that way and every block is
+    /// written once — so a run of zeros is skipped rather than stored.
+    private static func decode(
+        sequential coefficients: UnsafeMutableBufferPointer<Int16>,
+        dc: JPEG.Table.Huffman,
+        ac: JPEG.Table.Huffman,
+        from bits: inout JPEG.Bitstream,
+        predictor: inout Int32
+    ) throws(JPEG.Failure) {
         let category: Int = .init(try dc.symbol(from: &bits))
         guard category <= 16 else {
             throw .decoding(.invalidEntropyCodedSymbol)
         }
         predictor &+= .init(bits.amplitude(category: category))
-        self.planes[component.plane][x: block.x, y: block.y, z: 0] =
-            .init(truncatingIfNeeded: predictor)
+        coefficients[0] = .init(truncatingIfNeeded: predictor)
 
         var z: Int = 1
         while z < 64 {
@@ -257,11 +302,8 @@ extension JPEG.Data.Spectral {
                 throw .decoding(.invalidEntropyCodedSymbol)
             }
 
-            self.planes[component.plane][
-                x: block.x,
-                y: block.y,
-                z: JPEG.zigzag[z]
-            ] = .init(truncatingIfNeeded: bits.amplitude(category: size))
+            coefficients[JPEG.zigzag[z]] =
+                .init(truncatingIfNeeded: bits.amplitude(category: size))
             z += 1
         }
     }
