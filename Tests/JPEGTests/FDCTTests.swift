@@ -104,4 +104,64 @@ struct FDCTTests {
         // Two counts: one from each transform's rounding.
         #expect(worst <= 2, "worst round trip deviation \(worst)")
     }
+
+    /// The reciprocal quantizer has to agree with the dividing one exactly, not
+    /// nearly. A multiply-high is a substitute for a division only inside a
+    /// bound, and one count of disagreement in a coefficient is a visible
+    /// artifact that no round-trip tolerance would catch.
+    @Test("reciprocal quantization matches division", arguments: [8, 12])
+    func reciprocal(precision: Int) throws {
+        var generator: Generator = .init(seed: 0x9E3779B97F4A7C15)
+
+        // Every quality, so the sweep covers factors from 1 — which makes the
+        // multiplier overflow 32 bits — up to the 255 a baseline table clamps to,
+        // and the four-figure factors an extended one carries at quality 1.
+        for quality: Int in 1 ... 100 {
+            for standard: JPEG.Table.Quantization.Standard in [.luminance, .chrominance] {
+                for baseline: Bool in [true, false] {
+                    let table: JPEG.Table.Quantization = .standard(
+                        standard, quality: quality, target: 0, baseline: baseline
+                    )
+                    let reciprocal: JPEG.Table.Quantization.Reciprocal =
+                        try #require(table.reciprocal(precision: precision))
+
+                    // The extremes of the range T.81 gives the forward transform,
+                    // where a reciprocal fails first if it fails, plus noise
+                    // across the interior.
+                    let bound: Int32 = 1 << (precision + 2)
+                    var blocks: [[Int32]] = [
+                        .init(repeating: bound, count: 64),
+                        .init(repeating: -bound, count: 64),
+                        .init(repeating: 0, count: 64),
+                    ]
+                    let span: UInt64 = .init(2 * bound + 1)
+                    for _: Int in 0 ..< 4 {
+                        blocks.append((0 ..< 64).map { _ in
+                            .init(truncatingIfNeeded: generator.next() % span) - bound
+                        })
+                    }
+
+                    for block: [Int32] in blocks {
+                        var divided: [Int16] = .init(repeating: 0, count: 64)
+                        var multiplied: [Int16] = .init(repeating: 0, count: 64)
+                        block.withUnsafeBufferPointer { coefficients in
+                            divided.withUnsafeMutableBufferPointer {
+                                JPEG.FDCT.quantize(coefficients, by: table, into: $0)
+                            }
+                            multiplied.withUnsafeMutableBufferPointer {
+                                JPEG.FDCT.quantize(coefficients, by: reciprocal, into: $0)
+                            }
+                        }
+                        #expect(
+                            divided == multiplied,
+                            """
+                            quality \(quality) baseline \(baseline) \
+                            precision \(precision)
+                            """
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
