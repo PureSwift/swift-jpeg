@@ -272,26 +272,41 @@ extension JPEG.Data.Planar {
                         // Two output pixels at a time. Under a halving the even
                         // pixel interpolates source columns k-1 and k at three
                         // quarters and the odd one columns k and k+1 at one
-                        // quarter, so a pair costs three loads from each row
-                        // rather than four, the fractions are constants rather
-                        // than a third table, and the walk over the source row
-                        // is sequential instead of indexed.
+                        // quarter, so the fractions are constants rather than a
+                        // third table and the walk over the source row is
+                        // sequential instead of indexed.
+                        //
+                        // A pair spans three source columns, but only the last of
+                        // them is new: the pair at k+1 reads columns k, k+1 and
+                        // k+2, and the first two are the ones this iteration just
+                        // read. So they are carried in registers and rotated,
+                        // which makes the loop cost two loads per pair rather
+                        // than six. The values are the same either way, and the
+                        // resampling test holds this loop against the tabulated
+                        // one to prove it.
                         var k: Int = x >> 1
-                        while x + 1 < interior.upperBound {
-                            let a: Int32 = .init(samples[above + k - 1])
-                            let b: Int32 = .init(samples[above + k])
-                            let c: Int32 = .init(samples[below + k - 1])
-                            let d: Int32 = .init(samples[below + k])
-                            values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
-                            output += stride
+                        let upper: Int = interior.upperBound
+                        if x + 1 < upper {
+                            var a: Int32 = .init(samples[above + k - 1])
+                            var b: Int32 = .init(samples[above + k])
+                            var c: Int32 = .init(samples[below + k - 1])
+                            var d: Int32 = .init(samples[below + k])
+                            while x + 1 < upper {
+                                let e: Int32 = .init(samples[above + k + 1])
+                                let f: Int32 = .init(samples[below + k + 1])
 
-                            let e: Int32 = .init(samples[above + k + 1])
-                            let f: Int32 = .init(samples[below + k + 1])
-                            values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
-                            output += stride
+                                values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
+                                output += stride
+                                values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
+                                output += stride
 
-                            k += 1
-                            x += 2
+                                a = b
+                                b = e
+                                c = d
+                                d = f
+                                k += 1
+                                x += 2
+                            }
                         }
 
                         while x < width {
