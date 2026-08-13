@@ -6,7 +6,7 @@ extension JPEG.Table.Huffman {
     /// come from the same construction, so building this from a table cannot
     /// disagree with what a decoder would reconstruct — which is the property
     /// that makes an encode-decode round trip meaningful as a test.
-    public struct Encoder {
+    public final class Encoder {
         /// The code and its length for each symbol, indexed by symbol value.
         ///
         /// Packed rather than held as two arrays: the length in the high 16 bits,
