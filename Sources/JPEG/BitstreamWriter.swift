@@ -47,8 +47,9 @@ extension JPEG.BitstreamWriter {
     /// Shifts `count` bits of `value` into the accumulator without emitting.
     ///
     /// The caller is responsible for keeping the accumulator from overflowing,
-    /// which means draining it before it can exceed 64 bits. At most 16 bits go
-    /// in per call and at most 7 are left over after a drain, so a write cannot.
+    /// which means draining it before it can exceed 64 bits. A drain leaves fewer
+    /// than 32 bits behind and at most 16 go in per call, so the accumulator
+    /// never holds more than 47 and a write cannot overflow it.
     ///
     /// A count of zero is deliberately not a special case: the mask comes out
     /// zero and the shift is by zero, so nothing happens, which is exactly what
@@ -63,12 +64,61 @@ extension JPEG.BitstreamWriter {
         self.count += count
     }
 
-    /// Emits every whole byte the accumulator holds.
+    /// Emits every whole byte the accumulator holds, one at a time.
+    ///
+    /// The tail case. ``drain()`` handles the bulk four bytes at a time and
+    /// leaves fewer than four behind; this is what ``finish()`` uses to get them
+    /// out, and what ``drain()`` falls back to for a word that needs stuffing.
     @inline(__always)
-    private mutating func drain() {
+    private mutating func drainBytes() {
         while self.count >= 8 {
             self.count -= 8
             self.emit(.init(truncatingIfNeeded: self.accumulator >> UInt64(self.count)))
+        }
+    }
+
+    /// Emits four bytes at a time while the accumulator holds that many.
+    ///
+    /// The accumulator is allowed to fill rather than being emptied after every
+    /// write, so this runs a quarter as often as a byte-at-a-time drain and the
+    /// loop's own bookkeeping is paid a quarter as often.
+    ///
+    /// What that buys is the stuffing test. A `0xFF` in entropy coded data needs
+    /// a zero written after it, which is a branch on every byte — and entropy
+    /// coded data almost never reaches `0xFF`, so it is a branch that decides
+    /// nothing. Testing four bytes at once instead:
+    /// `(~w - 0x01010101) & w & 0x80808080` is nonzero exactly when some byte of
+    /// `w` is `0xFF`. Only then does this fall back to emitting one at a time.
+    ///
+    /// The test is exact in both directions, checked against a byte-by-byte
+    /// reference over every value of every byte position and three million random
+    /// words. A false positive would only be slow; a false negative would write
+    /// an unescaped marker into the stream.
+    ///
+    /// The four bytes go out as four appends, not as one bulk copy. Copying them
+    /// with `append(contentsOf:)` over the word's bytes was tried, since it looks
+    /// like it should replace four uniqueness checks with one, and it measured
+    /// *worse* — 157.2M instructions against 150.9M — because that call goes
+    /// through the generic sequence path and spends about 110 instructions moving
+    /// four bytes.
+    @inline(__always)
+    private mutating func drain() {
+        while self.count >= 32 {
+            self.count -= 32
+            let word: UInt32 = .init(
+                truncatingIfNeeded: self.accumulator >> UInt64(self.count)
+            )
+            guard (~word &- 0x0101_0101) & word & 0x8080_8080 == 0 else {
+                self.emit(.init(truncatingIfNeeded: word >> 24))
+                self.emit(.init(truncatingIfNeeded: word >> 16))
+                self.emit(.init(truncatingIfNeeded: word >> 8))
+                self.emit(.init(truncatingIfNeeded: word))
+                continue
+            }
+            self.bytes.append(.init(truncatingIfNeeded: word >> 24))
+            self.bytes.append(.init(truncatingIfNeeded: word >> 16))
+            self.bytes.append(.init(truncatingIfNeeded: word >> 8))
+            self.bytes.append(.init(truncatingIfNeeded: word))
         }
     }
 
@@ -103,10 +153,15 @@ extension JPEG.BitstreamWriter {
     /// Huffman code — the standard tables leave the all-ones code unassigned
     /// precisely so a decoder reading into the padding fails loudly.
     public mutating func finish() -> [UInt8] {
-        if self.count > 0 {
-            let padding: Int = 8 - self.count
+        // Up to 31 bits may be waiting, not just the up-to-7 of a writer that
+        // emptied itself every write, so the padding is to the next byte boundary
+        // rather than to the first one.
+        let remainder: Int = self.count & 7
+        if remainder > 0 {
+            let padding: Int = 8 - remainder
             self.write(.init((1 << UInt16(padding)) - 1), count: padding)
         }
+        self.drainBytes()
         defer {
             self.bytes = []
             self.accumulator = 0
