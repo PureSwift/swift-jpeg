@@ -7,57 +7,59 @@ extension JPEG.Table.Huffman {
     /// disagree with what a decoder would reconstruct — which is the property
     /// that makes an encode-decode round trip meaningful as a test.
     public struct Encoder {
-        /// The code for each symbol, indexed by symbol value.
-        private let codes: [UInt16]
-        /// The code length for each symbol, or 0 if the table does not assign
-        /// one.
-        private let lengths: [Int]
+        /// The code and its length for each symbol, indexed by symbol value.
+        ///
+        /// Packed rather than held as two arrays: the length in the high 16 bits,
+        /// the code in the low 16. Writing a symbol needs both, and one indexed
+        /// access costs one bounds check where two cost two. A length of zero —
+        /// the table assigns this symbol no code — falls out of the same load.
+        private let entries: [UInt32]
         /// Where symbols are tallied instead of written, when this encoder is
         /// gathering statistics for an optimal table.
         private let counter: Counter?
 
-        init(codes: [UInt16], lengths: [Int], counter: Counter? = nil) {
-            self.codes = codes
-            self.lengths = lengths
+        init(entries: [UInt32], counter: Counter? = nil) {
+            self.entries = entries
             self.counter = counter
+        }
+
+        /// Packs one symbol's code and length into an entry.
+        static func entry(code: UInt16, length: Int) -> UInt32 {
+            .init(length) << 16 | .init(code)
         }
 
         /// An encoder that counts symbols rather than emitting them.
         public static func counting(into counter: Counter) -> Self {
-            .init(
-                codes: .init(repeating: 0, count: 256),
-                lengths: .init(repeating: 0, count: 256),
-                counter: counter
-            )
+            .init(entries: .init(repeating: 0, count: 256), counter: counter)
         }
     }
 
     /// Builds the symbol-to-code lookup for this table.
     public func encoder() -> Encoder {
-        var codes: [UInt16] = .init(repeating: 0, count: 256)
-        var lengths: [Int] = .init(repeating: 0, count: 256)
+        var entries: [UInt32] = .init(repeating: 0, count: 256)
 
         var code: Int = 0
         var index: Int = 0
         for length: Int in 1 ... 16 {
             for _: Int in 0 ..< self.counts[length - 1] {
                 let symbol: Int = .init(self.values[index])
-                codes[symbol] = .init(truncatingIfNeeded: code)
-                lengths[symbol] = length
+                entries[symbol] = Encoder.entry(
+                    code: .init(truncatingIfNeeded: code), length: length
+                )
                 code += 1
                 index += 1
             }
             code <<= 1
         }
 
-        return .init(codes: codes, lengths: lengths)
+        return .init(entries: entries)
     }
 }
 
 extension JPEG.Table.Huffman.Encoder {
     /// Whether this table assigns a code to the given symbol.
     public func encodes(_ symbol: UInt8) -> Bool {
-        self.lengths[.init(symbol)] > 0
+        self.entries[.init(symbol)] >> 16 > 0
     }
 
     /// Writes the code for one symbol.
@@ -67,17 +69,19 @@ extension JPEG.Table.Huffman.Encoder {
     /// as a corrupt image rather than as an error — which is exactly what
     /// happened here with 12-bit samples, whose magnitude categories run past
     /// the eleven the Annex K tables cover.
+    @inline(__always)
     public func encode(_ symbol: UInt8, to bits: inout JPEG.BitstreamWriter) throws(JPEG.Failure) {
         if let counter: Counter = self.counter {
             counter.record(symbol)
             return
         }
 
-        let index: Int = .init(symbol)
-        guard self.lengths[index] > 0 else {
+        let entry: UInt32 = self.entries[.init(symbol)]
+        let length: Int = .init(entry >> 16)
+        guard length > 0 else {
             throw .encoding(.unencodableSymbol(symbol))
         }
-        bits.write(self.codes[index], count: self.lengths[index])
+        bits.write(.init(truncatingIfNeeded: entry), count: length)
     }
 }
 
