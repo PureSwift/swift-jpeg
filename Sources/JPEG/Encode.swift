@@ -51,7 +51,12 @@ extension JPEG {
 extension JPEG.Data.Spectral {
     /// The lookups and geometry one scan component needs, resolved once instead
     /// of per block.
-    private struct Bound {
+    ///
+    /// A class, like the decoder's ``Resolved``, and for the same reason: an
+    /// encoder holds an array, so a struct here would be copied — and its array
+    /// retained and released — every time one of these is bound or passed, which
+    /// the scan loop does per block.
+    private final class Bound {
         let plane: Int
         let sampling: JPEG.Component.Sampling
         // Optional for the same reason the decoder's are: a progressive scan
@@ -59,6 +64,18 @@ extension JPEG.Data.Spectral {
         // neither, since it is not Huffman coded at all.
         let dc: JPEG.Table.Huffman.Encoder?
         let ac: JPEG.Table.Huffman.Encoder?
+
+        init(
+            plane: Int,
+            sampling: JPEG.Component.Sampling,
+            dc: JPEG.Table.Huffman.Encoder?,
+            ac: JPEG.Table.Huffman.Encoder?
+        ) {
+            self.plane = plane
+            self.sampling = sampling
+            self.dc = dc
+            self.ac = ac
+        }
     }
 
     /// Entropy codes one sequential scan.
