@@ -146,4 +146,32 @@ struct HuffmanTests {
         // was found where it should have been.
         #expect(failure?.stage == JPEG.ParsingError.namespace)
     }
+
+    /// A table that assigns a symbol no code has to refuse to encode it.
+    ///
+    /// Silently skipping it would desynchronize everything after it, so the
+    /// failure would surface as a corrupt image rather than as an error — which
+    /// is what happened with 12-bit samples, whose magnitude categories run past
+    /// the eleven the Annex K DC table covers.
+    ///
+    /// Worth stating as a unit test rather than trusting a round trip to find:
+    /// no fixture in this suite reaches an unassigned symbol, so breaking this
+    /// guard changes nothing anywhere else.
+    @Test
+    func refusesUnassignedSymbol() throws {
+        let table: JPEG.Table.Huffman = try .standard(.luminance, class: .dc, target: 0)
+        let encoder: JPEG.Table.Huffman.Encoder = table.encoder()
+
+        // Categories 0 through 11 are what the standard table carries.
+        #expect(encoder.encodes(11))
+        #expect(!encoder.encodes(12))
+
+        var bits: JPEG.BitstreamWriter = .init()
+        try encoder.encode(11, to: &bits)
+
+        let failure: JPEG.Failure? = #expect(throws: JPEG.Failure.self) {
+            try encoder.encode(12, to: &bits)
+        }
+        #expect(failure?.stage == JPEG.EncodingError.namespace)
+    }
 }
