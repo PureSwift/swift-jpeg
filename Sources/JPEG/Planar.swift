@@ -89,24 +89,6 @@ extension JPEG.Data {
             self.buffer.withUnsafeMutableBufferPointer { body($0) }
         }
 
-        /// Copies an `n`×`n` block of samples in at `(x, y)`.
-        ///
-        /// A block at a time rather than a sample at a time, so the bounds
-        /// check and the row offset are computed once per row instead of
-        /// once per sample.
-        mutating func write(
-            block: UnsafeMutableBufferPointer<UInt16>, x: Int, y: Int, size n: Int
-        ) {
-            self.buffer.withUnsafeMutableBufferPointer { destination in
-                for row: Int in 0 ..< n where y + row < self.size.y {
-                    let base: Int = (y + row) * self.size.x + x
-                    for column: Int in 0 ..< n where x + column < self.size.x {
-                        destination[base + column] = block[row * n + column]
-                    }
-                }
-            }
-        }
-
         /// Accesses the sample at `(x, y)`.
         ///
         /// Reads outside the plane clamp to the edge, which is what
@@ -226,20 +208,42 @@ extension JPEG.Data.Spectral {
             // Two scratch blocks for the whole plane rather than four heap
             // allocations per block. On a megapixel image that is the
             // difference between a hundred thousand allocations and none.
+            // The factors and the destination are reached through pointers taken
+            // once for the plane. Both were reached per block before, and the
+            // factors per *coefficient*: `table[z: z]` is an array element, so
+            // dequantizing paid a bounds check 64 times a block for a table that
+            // does not change across the plane.
             withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { coefficients in
                 withUnsafeTemporaryAllocation(of: UInt16.self, capacity: 64) { samples in
+                    table.factors.withUnsafeBufferPointer { factors in
+                    output.withUnsafeMutableSamples { destination in
+                    // A plane is exactly `blocks * n` samples in each direction,
+                    // so every block lands wholly inside it and the write is a
+                    // straight strided copy. The block writer this replaces
+                    // tested every row and column against the plane's edge, which
+                    // was never false from here and was its only caller.
+                    let extent: Int = plane.blocks.x * n
                     for by: Int in 0 ..< plane.blocks.y {
                         for bx: Int in 0 ..< plane.blocks.x {
                             plane.withBlock(x: bx, y: by) { levels in
                                 for z: Int in 0 ..< 64 {
-                                    coefficients[z] = .init(levels[z]) * .init(table[z: z])
+                                    coefficients[z] = .init(levels[z]) * .init(factors[z])
                                 }
                             }
                             JPEG.IDCT.transform(
                                 .init(coefficients), precision: precision, size: n, into: samples
                             )
-                            output.write(block: samples, x: bx * n, y: by * n, size: n)
+
+                            let base: Int = by * n * extent + bx * n
+                            for row: Int in 0 ..< n {
+                                let start: Int = base + row * extent
+                                for column: Int in 0 ..< n {
+                                    destination[start + column] = samples[row * n + column]
+                                }
+                            }
                         }
+                    }
+                    }
                     }
                 }
             }
