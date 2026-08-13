@@ -145,6 +145,49 @@ extension JPEG.Data.Planar {
         return .init(value >> 16)
     }
 
+    /// Blends the four samples around an output position that sits at a quarter
+    /// of the way between them in both directions.
+    ///
+    /// The same result as ``blend(_:_:_:_:fx:fy:)`` for the fractions a halving
+    /// produces, and much cheaper, because at those fractions the Q16 form
+    /// collapses. A halving makes every horizontal fraction 3/4 or 1/4 and, when
+    /// the plane is halved vertically too, every vertical fraction likewise — so
+    /// each of the four weights is a product of two of {1, 3} over 4, and the
+    /// whole blend is a weighted sum over sixteen.
+    ///
+    /// Writing out the general form with `hx` of 192 and `fy` of 192:
+    ///
+    /// ```
+    /// top    = 256a + 192(b - a)          = 64(a + 3b)
+    /// bottom = 256c + 192(d - c)          = 64(c + 3d)
+    /// value  = 64·top + 192·bottom + 2^15 = 4096[(a + 3b) + 3(c + 3d) + 8]
+    /// value >> 16                         = [(a + 3b) + 3(c + 3d) + 8] >> 4
+    /// ```
+    ///
+    /// The factor of 4096 divides out exactly, so this is not an approximation of
+    /// the other function — it is the same integer, by the same rounding. The
+    /// other three fraction pairs work out the same way with the weights
+    /// exchanged, which is why they are passed in rather than written here.
+    ///
+    /// It also stays in 32 bits at every precision, where the general form cannot:
+    /// the largest value this can produce is sixteen times a sample, and
+    /// `16 · 65535` is 21 bits.
+    ///
+    /// -   Parameters:
+    ///     -   h: The weights of the left and right source columns, `(1, 3)` when
+    ///         the output column is nearer the right one and `(3, 1)` otherwise.
+    ///     -   v: The same for the upper and lower source rows.
+    @inline(__always)
+    private static func blend(
+        _ a: Int32, _ b: Int32, _ c: Int32, _ d: Int32,
+        h: (Int32, Int32),
+        v: (Int32, Int32)
+    ) -> UInt16 {
+        let top: Int32 = h.0 * a + h.1 * b
+        let bottom: Int32 = h.0 * c + h.1 * d
+        return .init((v.0 * top + v.1 * bottom + 8) >> 4)
+    }
+
     /// Upsamples and interleaves this image to full resolution.
     ///
     /// A component sampled as densely as the frame is copied verbatim. A
@@ -214,6 +257,10 @@ extension JPEG.Data.Planar {
             // and makes a pair of them share their middle source sample, both
             // of which the general loop has no way to know.
             let halved: Bool = 2 * sampling.x == scale.x
+            // Halved in the other direction too, which is 4:2:0 and so most of
+            // what there is. Then the vertical fractions are a quarter and three
+            // quarters as well, and the blend collapses to small integers.
+            let halvedRows: Bool = 2 * sampling.y == scale.y
 
             // The output columns where neither source column of either pixel of
             // a pair is clamped. Outside it the interpolation reaches past the
@@ -291,21 +338,47 @@ extension JPEG.Data.Planar {
                             var b: Int32 = .init(samples[above + k])
                             var c: Int32 = .init(samples[below + k - 1])
                             var d: Int32 = .init(samples[below + k])
-                            while x + 1 < upper {
-                                let e: Int32 = .init(samples[above + k + 1])
-                                let f: Int32 = .init(samples[below + k + 1])
 
-                                values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
-                                output += stride
-                                values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
-                                output += stride
+                            // Under a halving in both directions the vertical
+                            // fraction is a quarter or three quarters, so the row
+                            // weights come out of which side of the source pair
+                            // this output row falls on. The two loops differ only
+                            // in which blend they call.
+                            if halvedRows {
+                                let v: (Int32, Int32) = fy == 49152 ? (1, 3) : (3, 1)
+                                while x + 1 < upper {
+                                    let e: Int32 = .init(samples[above + k + 1])
+                                    let f: Int32 = .init(samples[below + k + 1])
 
-                                a = b
-                                b = e
-                                c = d
-                                d = f
-                                k += 1
-                                x += 2
+                                    values[output] = Self.blend(a, b, c, d, h: (1, 3), v: v)
+                                    output += stride
+                                    values[output] = Self.blend(b, e, d, f, h: (3, 1), v: v)
+                                    output += stride
+
+                                    a = b
+                                    b = e
+                                    c = d
+                                    d = f
+                                    k += 1
+                                    x += 2
+                                }
+                            } else {
+                                while x + 1 < upper {
+                                    let e: Int32 = .init(samples[above + k + 1])
+                                    let f: Int32 = .init(samples[below + k + 1])
+
+                                    values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
+                                    output += stride
+                                    values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
+                                    output += stride
+
+                                    a = b
+                                    b = e
+                                    c = d
+                                    d = f
+                                    k += 1
+                                    x += 2
+                                }
                             }
                         }
 
