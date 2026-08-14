@@ -272,6 +272,10 @@ extension JPEG.Data.Planar {
                 interior = 0 ..< 0
             }
 
+            // Where the interior goes through the installed row kernel, it
+            // lands here first and is scattered into the interleaved output
+            // after. One row, allocated once per plane.
+            withUnsafeTemporaryAllocation(of: UInt16.self, capacity: Swift.max(width, 1)) { scratch in
             source.withUnsafeSamples { samples in
               values.withUnsafeMutableBufferPointer { values in
                 lefts.withUnsafeBufferPointer { lefts in
@@ -333,17 +337,35 @@ extension JPEG.Data.Planar {
                         // one to prove it.
                         var k: Int = x >> 1
                         let upper: Int = interior.upperBound
-                        if x + 1 < upper {
+                        // Under a halving in both directions the vertical
+                        // fraction is a quarter or three quarters, so the row
+                        // weights come out of which side of the source pair
+                        // this output row falls on — and the whole interior is
+                        // the shape the row kernel takes, if one is installed.
+                        if halvedRows, x + 1 < upper,
+                           let kernel: JPEG.Kernel.UpsamplePairs = JPEG.Kernel.upsamplePairs
+                        {
+                            let pairs: Int = ((upper - x - 2) >> 1) + 1
+                            kernel(
+                                samples.baseAddress! + above + k,
+                                samples.baseAddress! + below + k,
+                                pairs,
+                                fy == 49152 ? 1 : 3,
+                                fy == 49152 ? 3 : 1,
+                                scratch.baseAddress!
+                            )
+                            for i: Int in 0 ..< 2 * pairs {
+                                values[output] = scratch[i]
+                                output += stride
+                            }
+                            k += pairs
+                            x += 2 * pairs
+                        } else if x + 1 < upper {
                             var a: Int32 = .init(samples[above + k - 1])
                             var b: Int32 = .init(samples[above + k])
                             var c: Int32 = .init(samples[below + k - 1])
                             var d: Int32 = .init(samples[below + k])
 
-                            // Under a halving in both directions the vertical
-                            // fraction is a quarter or three quarters, so the row
-                            // weights come out of which side of the source pair
-                            // this output row falls on. The two loops differ only
-                            // in which blend they call.
                             if halvedRows {
                                 let v: (Int32, Int32) = fy == 49152 ? (1, 3) : (3, 1)
                                 while x + 1 < upper {
@@ -392,6 +414,7 @@ extension JPEG.Data.Planar {
                   }
                 }
               }
+            }
             }
         }
 
