@@ -255,12 +255,16 @@ extension JPEG.Data.Planar {
                         for bx: Int in 0 ..< blocks.x {
                             // The plane is padded to whole blocks, so every
                             // block is inside it and the row offsets are a
-                            // straight multiply.
+                            // straight multiply. Each row of the block is eight
+                            // contiguous samples in the plane, so it moves as
+                            // one 16-byte copy rather than eight indexed loads.
                             for row: Int in 0 ..< 8 {
                                 let base: Int = (by * 8 + row) * extent.x + bx * 8
-                                for column: Int in 0 ..< 8 {
-                                    samples[row << 3 | column] = source[base + column]
-                                }
+                                UnsafeMutableRawPointer(samples.baseAddress! + row * 8)
+                                    .copyMemory(
+                                        from: source.baseAddress! + base,
+                                        byteCount: 16
+                                    )
                             }
 
                             JPEG.Kernel.forwardTransform(
