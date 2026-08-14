@@ -322,4 +322,42 @@ struct AccelerateTests {
         #expect(portable.count == accelerated.count)
         #expect(portable == accelerated)
     }
+
+    /// The upsampling kernel must reproduce the engine's inline loop exactly.
+    ///
+    /// The whole-image test above covers it at one size; this sweeps sizes so
+    /// that the kernel's vector body and scalar tail cover different shares of
+    /// each row, including widths whose interior is too narrow for the vector
+    /// body to run at all. Bit equality, not a tolerance: the kernel computes
+    /// the same integers or it is a different filter.
+    @Test("upsampling matches the inline loop")
+    func upsampling() throws {
+        var generator: Generator = .init(seed: 0x5CA1E)
+
+        for width: Int in [4, 5, 16, 17, 18, 19, 31, 32, 33, 47, 133] {
+            for height: Int in [2, 3, 16, 17, 101] {
+                let layout: JPEG.Layout<JPEG.Common> = try .init(
+                    format: .ycc(1, 2, 3, precision: 8),
+                    process: .baseline,
+                    width: width,
+                    height: height,
+                    sampling: [.init(x: 2, y: 2), .init(x: 1, y: 1), .init(x: 1, y: 1)],
+                    selectors: [0, 1, 1]
+                )
+                let values: [UInt16] = (0 ..< width * height * 3).map { _ in
+                    .init(truncatingIfNeeded: generator.next() >> 56)
+                }
+                let planar: JPEG.Data.Planar<JPEG.Common> = JPEG.Data.Rectangular(
+                    layout: layout, values: values
+                ).subsampled()
+
+                let portable: [UInt16] = planar.interleaved().values
+                let accelerated: [UInt16] = Self.accelerated { _ in
+                    planar.interleaved().values
+                }
+
+                #expect(portable == accelerated, "\(width)x\(height)")
+            }
+        }
+    }
 }
