@@ -29,20 +29,34 @@ extension JPEG {
             var bytes: [UInt8] = []
             bytes.reserveCapacity(interval.count)
 
-            var stuffed: Bool = false
-            for byte: UInt8 in interval {
-                if stuffed {
-                    // The byte after 0xFF. A 0x00 is the stuffing itself and is
-                    // dropped; anything else means the caller passed data that
-                    // still contains a marker.
-                    stuffed = false
-                    if byte != 0x00 {
-                        bytes.append(byte)
+            // A run at a time rather than a byte at a time, like the lexer that
+            // produced this data: everything up to and including a 0xFF is
+            // appended in bulk, and only the byte after a 0xFF is examined —
+            // a 0x00 is the stuffing itself and is dropped; anything else means
+            // the caller passed data that still contains a marker, and is kept
+            // without being examined for stuffing of its own, which is what the
+            // byte-at-a-time state machine this replaces did.
+            interval.withUnsafeBufferPointer { (buffer: UnsafeBufferPointer<UInt8>) in
+                let end: Int = buffer.count
+                var i: Int = 0
+                while i < end {
+                    var j: Int = i
+                    while j < end, buffer[j] != 0xFF {
+                        j += 1
                     }
-                    continue
+                    guard j < end else {
+                        bytes.append(contentsOf: UnsafeBufferPointer(rebasing: buffer[i ..< end]))
+                        break
+                    }
+                    bytes.append(contentsOf: UnsafeBufferPointer(rebasing: buffer[i ... j]))
+                    i = j + 1
+                    if i < end {
+                        if buffer[i] != 0x00 {
+                            bytes.append(buffer[i])
+                        }
+                        i += 1
+                    }
                 }
-                bytes.append(byte)
-                stuffed = byte == 0xFF
             }
 
             self.bytes = bytes
