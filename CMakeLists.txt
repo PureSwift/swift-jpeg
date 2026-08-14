@@ -85,7 +85,8 @@ add_library(CJPEGAccel STATIC
     Sources/CJPEGAccel/transforms_avx2.c
     Sources/CJPEGAccel/transforms_neon.c
     Sources/CJPEGAccel/color_avx2.c
-    Sources/CJPEGAccel/color_neon.c)
+    Sources/CJPEGAccel/color_neon.c
+    Sources/CJPEGAccel/upsample_avx2.c)
 target_include_directories(CJPEGAccel PUBLIC ${CACCEL_INCLUDE_DIR})
 target_link_libraries(CJPEGAccel PUBLIC CCPUFeatures)
 set_target_properties(CJPEGAccel PROPERTIES POSITION_INDEPENDENT_CODE ON)
