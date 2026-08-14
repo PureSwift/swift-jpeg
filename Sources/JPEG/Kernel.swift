@@ -90,6 +90,37 @@ extension JPEG {
             _ interleaved: UnsafeMutablePointer<UInt16>
         ) -> Void
 
+        /// Produces one row of 2x-upsampled chroma for a plane that is halved
+        /// vertically too — 4:2:0, the case that dominates everything anything
+        /// decodes.
+        ///
+        /// Pair `i` interpolates source columns `i - 1`, `i` and `i + 1` of the
+        /// two rows, with `(v0, v1)` weighting the rows `(1, 3)` or `(3, 1)` by
+        /// which side of the source pair the output row falls on. The output is
+        /// `2 * pairs` samples, contiguous. Reads one column each side of the
+        /// pairs, so the pointers must sit in the interior of their rows.
+        ///
+        /// An implementation must match the engine's arithmetic bit for bit —
+        /// this is the collapsed integer blend, not a filter with roundings to
+        /// disagree about.
+        ///
+        /// -   Parameters:
+        ///     -   above: The source row above the output row, at the first
+        ///         pair's center column.
+        ///     -   below: The source row below it, likewise.
+        ///     -   pairs: How many output pairs to produce.
+        ///     -   v0: The weight of `above`, 1 or 3.
+        ///     -   v1: The weight of `below`, the other one.
+        ///     -   out: Where to write `2 * pairs` samples.
+        public typealias UpsamplePairs = @convention(c) (
+            _ above: UnsafePointer<UInt16>,
+            _ below: UnsafePointer<UInt16>,
+            _ pairs: Int,
+            _ v0: Int32,
+            _ v1: Int32,
+            _ out: UnsafeMutablePointer<UInt16>
+        ) -> Void
+
         /// The inverse transform in use.
         ///
         /// Assign before decoding. Replacing it while a decode is in flight is
@@ -111,6 +142,20 @@ extension JPEG {
         /// The encoding color transform in use.
         public nonisolated(unsafe)
         static var forwardColorTransform: ForwardColorTransform = Self.portableForwardColor
+
+        /// The upsampling row kernel in use, or nil for none.
+        ///
+        /// Optional where the other four default to portable implementations,
+        /// and deliberately so. Those work at block or image granularity, and
+        /// the portable code behind the pointer is exactly what the engine
+        /// would run anyway. This one works at row granularity into a
+        /// *contiguous* buffer, and the engine's output is interleaved — so
+        /// using any row kernel costs a scatter from that buffer afterward.
+        /// The trade pays when the arithmetic gets vector-cheap and not
+        /// before, so the engine's inline loop is the portable implementation
+        /// and nil is how it knows to use it.
+        public nonisolated(unsafe)
+        static var upsamplePairs: UpsamplePairs? = nil
 
         /// A description of the installed kernels, for diagnostics.
         ///
@@ -191,6 +236,7 @@ extension JPEG.Kernel {
         Self.forwardTransform = Self.portableForward
         Self.colorTransform = Self.portableColor
         Self.forwardColorTransform = Self.portableForwardColor
+        Self.upsamplePairs = nil
         Self.description = "portable"
     }
 }
