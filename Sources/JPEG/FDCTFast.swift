@@ -243,7 +243,12 @@ extension JPEG.FDCT {
             for z: Int in 0 ..< 64 {
                 let entry: JPEG.Table.Quantization.Reciprocal.Entry = entries[z]
                 let coefficient: Int32 = coefficients[z]
-                let numerator: UInt64 = .init(coefficient.magnitude + entry.addend)
+                // Widened before the addition, not after. Added as 32-bit values
+                // the sum carries an overflow check the compiler cannot discharge;
+                // as 64-bit values each addend fits in 32 bits, so the unchecked
+                // sum provably fits in 33 and the check can be omitted by hand.
+                let numerator: UInt64 =
+                    .init(coefficient.magnitude) &+ .init(entry.addend)
                 // Parenthesized deliberately: `>>` binds tighter than `*` in
                 // Swift, so leaving them off shifts the multiplier rather than
                 // the product and quantizes every coefficient to zero.
