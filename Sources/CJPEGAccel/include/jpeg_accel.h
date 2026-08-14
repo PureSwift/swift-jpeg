@@ -44,6 +44,39 @@ int jpeg_accel_neon_available(void);
 #define JPEG_NONNULL _Nonnull
 #else
 #define JPEG_NONNULL
+/* One row of 2x horizontal upsampling for a plane that is halved vertically
+ * too, which is 4:2:0 chroma. `pairs` pairs of output samples, contiguous.
+ *
+ * Pair `i` interpolates source columns i-1, i and i+1 of the two source rows:
+ *
+ *     out[2i]     = (v0 * (above[i-1] + 3 * above[i])
+ *                  + v1 * (below[i-1] + 3 * below[i]) + 8) >> 4
+ *     out[2i + 1] = (v0 * (3 * above[i] + above[i+1])
+ *                  + v1 * (3 * below[i] + below[i+1]) + 8) >> 4
+ *
+ * with (v0, v1) either (1, 3) or (3, 1) by which side of the source row pair
+ * the output row falls on. This is the engine's collapsed bilinear blend,
+ * integer for integer; the caller holds it to bit equality with the scalar
+ * loop, not to within a count.
+ *
+ * Reads above[-1 .. pairs] and below[-1 .. pairs] inclusive — one column each
+ * side of the pairs — so the caller must point into the interior of the row,
+ * which is where the engine uses it: the clamped edge columns take its
+ * tabulated path instead.
+ *
+ * Unlike the other kernels this one has no portable twin behind the dispatch
+ * seam. The engine writes its output interleaved, so calling any row kernel
+ * costs a scatter from this contiguous row afterward; that trade only pays
+ * when the arithmetic gets vector-cheap, and the engine's inline loop is the
+ * portable implementation.
+ */
+void jpeg_accel_upsample_pairs_avx2(const uint16_t *JPEG_NONNULL above,
+                                    const uint16_t *JPEG_NONNULL below,
+                                    ptrdiff_t pairs,
+                                    int32_t v0,
+                                    int32_t v1,
+                                    uint16_t *JPEG_NONNULL out);
+
 #endif
 
 /* 64 dequantized coefficients, row-major, to 64 samples, row-major. */
@@ -113,5 +146,38 @@ void jpeg_accel_rgb_to_ycc_neon(const uint8_t *JPEG_NONNULL pixels,
                                 int32_t blue,
                                 ptrdiff_t count,
                                 uint16_t *JPEG_NONNULL interleaved);
+
+/* One row of 2x horizontal upsampling for a plane that is halved vertically
+ * too, which is 4:2:0 chroma. `pairs` pairs of output samples, contiguous.
+ *
+ * Pair `i` interpolates source columns i-1, i and i+1 of the two source rows:
+ *
+ *     out[2i]     = (v0 * (above[i-1] + 3 * above[i])
+ *                  + v1 * (below[i-1] + 3 * below[i]) + 8) >> 4
+ *     out[2i + 1] = (v0 * (3 * above[i] + above[i+1])
+ *                  + v1 * (3 * below[i] + below[i+1]) + 8) >> 4
+ *
+ * with (v0, v1) either (1, 3) or (3, 1) by which side of the source row pair
+ * the output row falls on. This is the engine's collapsed bilinear blend,
+ * integer for integer; the caller holds it to bit equality with the scalar
+ * loop, not to within a count.
+ *
+ * Reads above[-1 .. pairs] and below[-1 .. pairs] inclusive — one column each
+ * side of the pairs — so the caller must point into the interior of the row,
+ * which is where the engine uses it: the clamped edge columns take its
+ * tabulated path instead.
+ *
+ * Unlike the other kernels this one has no portable twin behind the dispatch
+ * seam. The engine writes its output interleaved, so calling any row kernel
+ * costs a scatter from this contiguous row afterward; that trade only pays
+ * when the arithmetic gets vector-cheap, and the engine's inline loop is the
+ * portable implementation.
+ */
+void jpeg_accel_upsample_pairs_avx2(const uint16_t *JPEG_NONNULL above,
+                                    const uint16_t *JPEG_NONNULL below,
+                                    ptrdiff_t pairs,
+                                    int32_t v0,
+                                    int32_t v1,
+                                    uint16_t *JPEG_NONNULL out);
 
 #endif
