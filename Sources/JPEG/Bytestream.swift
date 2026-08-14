@@ -30,6 +30,26 @@ extension JPEG.Bytestream {
         /// allocation per byte. A conformance backed by a buffer should
         /// override this; the default exists only so that one is not forced to.
         mutating func byte() -> UInt8?
+
+        /// Consumes bytes through the next `0xFF`, appending everything before
+        /// it to `output`. The `0xFF` itself is consumed and not appended.
+        ///
+        /// A requirement rather than a plain extension method so that a
+        /// buffer-backed conformance can substitute a bulk scan — the lexer
+        /// walks every byte of entropy coded data through this, and one byte
+        /// per call through a witness is the most expensive way there is to
+        /// move a third of a megabyte. The default is exactly the
+        /// byte-at-a-time loop it replaces, so a conformance that does nothing
+        /// gains nothing and loses nothing.
+        ///
+        /// The `0xFF` is consumed rather than left for the next read because a
+        /// source is consuming by contract: there is no way to put a byte
+        /// back, so a default implementation that promised to could not exist.
+        ///
+        /// -   Returns:
+        ///     Whether a `0xFF` was found. When `false`, the source is
+        ///     exhausted and everything it held was appended.
+        mutating func gather(into output: inout [UInt8]) -> Bool
     }
 
     /// A sink for bytes.
@@ -42,6 +62,16 @@ extension JPEG.Bytestream {
 extension JPEG.Bytestream.Source {
     public mutating func byte() -> UInt8? {
         self.read(count: 1)?[0]
+    }
+
+    public mutating func gather(into output: inout [UInt8]) -> Bool {
+        while let byte: UInt8 = self.byte() {
+            guard byte != 0xFF else {
+                return true
+            }
+            output.append(byte)
+        }
+        return false
     }
 }
 
@@ -132,20 +162,20 @@ extension JPEG.Bytestream.Source {
     ///     marker segment that terminated it.
     public mutating func segment(prefix: Bool) throws(JPEG.Failure) -> ([UInt8], (JPEG.Marker, [UInt8])) {
         var ecs: [UInt8] = []
+        // Bytes found outside a segment when none were expected. Gathered and
+        // dropped rather than skipped one at a time, so the two cases share
+        // the bulk scan; in a well-formed stream this collects nothing at all,
+        // because the very next byte is a marker's 0xFF.
+        var discarded: [UInt8] = []
 
         scan:
         while true {
-            guard let byte: UInt8 = self.byte() else {
+            // Everything up to the next 0xFF is entropy coded data — or
+            // garbage, if no entropy coded data is expected.
+            guard prefix ? self.gather(into: &ecs) : self.gather(into: &discarded) else {
                 throw prefix
                     ? JPEG.Failure.lexing(.truncatedEntropyCodedSegment)
                     : JPEG.Failure.lexing(.truncatedMarkerSegmentType)
-            }
-
-            guard byte == 0xFF else {
-                if prefix {
-                    ecs.append(byte)
-                }
-                continue scan
             }
 
             // 0xFF: either a stuffed literal, a fill byte, or a real marker.
@@ -235,6 +265,31 @@ extension JPEG.Bytestream {
                 self.offset += 1
             }
             return self.bytes[self.offset]
+        }
+
+        /// The bulk scan the ``gather(into:)`` requirement exists for.
+        ///
+        /// Finds the next `0xFF` with a straight compare loop over the buffer
+        /// and appends the run before it in one call, instead of a witness
+        /// dispatch, an optional, and a one-byte append per byte of entropy
+        /// coded data.
+        public mutating func gather(into output: inout [UInt8]) -> Bool {
+            let end: Int = self.bytes.count
+            var i: Int = self.offset
+            self.bytes.withUnsafeBufferPointer { (buffer: UnsafeBufferPointer<UInt8>) in
+                while i < end, buffer[i] != 0xFF {
+                    i += 1
+                }
+                output.append(
+                    contentsOf: UnsafeBufferPointer(rebasing: buffer[self.offset ..< i])
+                )
+            }
+            guard i < end else {
+                self.offset = end
+                return false
+            }
+            self.offset = i + 1
+            return true
         }
     }
 }
