@@ -234,12 +234,19 @@ extension JPEG.Data.Spectral {
                                 .init(coefficients), precision: precision, size: n, into: samples
                             )
 
+                            // Both sides of a row are contiguous — `n` samples
+                            // of the staging buffer, `n` samples of the plane —
+                            // so each row moves as one copy rather than `n`
+                            // indexed stores behind a loop whose length the
+                            // optimizer cannot see.
                             let base: Int = by * n * extent + bx * n
                             for row: Int in 0 ..< n {
-                                let start: Int = base + row * extent
-                                for column: Int in 0 ..< n {
-                                    destination[start + column] = samples[row * n + column]
-                                }
+                                UnsafeMutableRawPointer(
+                                    destination.baseAddress! + base + row * extent
+                                ).copyMemory(
+                                    from: samples.baseAddress! + row * n,
+                                    byteCount: 2 * n
+                                )
                             }
                         }
                     }
