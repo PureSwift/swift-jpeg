@@ -17,12 +17,21 @@ extension JPEG.Data.Spectral {
             return
         }
 
-        let category: Int = .init(try dc.symbol(from: &bits))
+        // One window for the code and the amplitude that follows it, as in the
+        // sequential decoder.
+        let head: UInt64 = bits.window()
+        guard let code: (symbol: UInt8, length: Int) = dc.symbol(in: head) else {
+            throw .decoding(.invalidEntropyCodedSymbol)
+        }
+        let category: Int = .init(code.symbol)
         guard category <= 16 else {
             throw .decoding(.invalidEntropyCodedSymbol)
         }
 
-        predictor &+= .init(bits.amplitude(category: category))
+        predictor &+= .init(
+            JPEG.Bitstream.amplitude(of: head, at: code.length, category: category)
+        )
+        bits.advance(code.length + category)
         self.planes[component.plane][x: block.x, y: block.y, z: 0] =
             .init(truncatingIfNeeded: predictor << Int32(approximation))
     }
@@ -71,20 +80,30 @@ extension JPEG.Data.Spectral {
 
         var k: Int = band.lowerBound
         while k < band.upperBound {
-            let symbol: UInt8 = try ac.symbol(from: &bits)
-            let run: Int = .init(symbol >> 4)
-            let size: Int = .init(symbol & 0x0F)
+            // The EOBn count is a field like the others, so it comes out of the
+            // same window as the code that announced it — at most fourteen bits
+            // after a code of at most sixteen, well inside the window.
+            let head: UInt64 = bits.window()
+            guard let code: (symbol: UInt8, length: Int) = ac.symbol(in: head) else {
+                throw .decoding(.invalidEntropyCodedSymbol)
+            }
+            let run: Int = .init(code.symbol >> 4)
+            let size: Int = .init(code.symbol & 0x0F)
 
             guard size > 0 else {
                 guard run == 15 else {
                     // EOBn: this block, plus 2^run + extra - 1 more.
                     eobrun = (1 << run) - 1
                     if run > 0 {
-                        eobrun += .init(bits.read(run))
+                        eobrun += .init(
+                            JPEG.Bitstream.field(of: head, at: code.length, count: run)
+                        )
                     }
+                    bits.advance(code.length + run)
                     return
                 }
                 // ZRL: sixteen zeros, and the run continues.
+                bits.advance(code.length)
                 k += 16
                 continue
             }
@@ -94,8 +113,12 @@ extension JPEG.Data.Spectral {
                 throw .decoding(.invalidEntropyCodedSymbol)
             }
 
-            self.planes[component.plane][x: block.x, y: block.y, z: JPEG.zigzag[k]] =
-                .init(truncatingIfNeeded: bits.amplitude(category: size) << approximation)
+            self.planes[component.plane][x: block.x, y: block.y, z: JPEG.zigzag[k]] = .init(
+                truncatingIfNeeded: JPEG.Bitstream.amplitude(
+                    of: head, at: code.length, category: size
+                ) << approximation
+            )
+            bits.advance(code.length + size)
             k += 1
         }
     }

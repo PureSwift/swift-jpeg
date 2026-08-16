@@ -257,6 +257,25 @@ extension JPEG.Bitstream {
         return window &<< (self.bit & 7)
     }
 
+    /// Returns `count` bits of a window, `offset` bits in.
+    ///
+    /// The windowed counterpart of ``peek(_:)``: what the reader would return
+    /// after advancing `offset` bits. A count of zero reads nothing and
+    /// returns zero — the shift that would express it is the one an
+    /// unmasked shift defines and a masked one does not, so it is a branch
+    /// rather than arithmetic.
+    ///
+    /// -   Parameters:
+    ///     -   offset: How many bits into the window the field begins, at most
+    ///         16 — the length of the Huffman code that preceded it.
+    ///     -   count: The field width, at most 16.
+    public static func field(of window: UInt64, at offset: Int, count: Int) -> UInt16 {
+        guard count > 0 else {
+            return 0
+        }
+        return .init(truncatingIfNeeded: (window &<< offset) &>> (64 - count))
+    }
+
     /// Reads a signed coefficient amplitude out of a window.
     ///
     /// The same `RECEIVE` and `EXTEND` pair as ``amplitude(category:)``, taking
@@ -271,9 +290,7 @@ extension JPEG.Bitstream {
         guard category > 0 else {
             return 0
         }
-        let raw: Int = .init(
-            truncatingIfNeeded: (window &<< offset) &>> (64 - category)
-        )
+        let raw: Int = .init(Self.field(of: window, at: offset, count: category))
         // A leading 1 bit means the value is positive and stored as-is.
         if raw >> (category - 1) != 0 {
             return raw
