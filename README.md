@@ -27,7 +27,7 @@ stock TurboJPEG header can link and use.
 | Progressive encoding | ✅ |
 | 12-bit precision | ✅ |
 | Scaled and cropped decoding | ✅ |
-| JFIF / EXIF metadata | ✅ JFIF typed; EXIF and comments carried intact |
+| JFIF / EXIF metadata | ✅ JFIF and EXIF orientation typed; the rest carried intact |
 | Lossless transformation | ✅ |
 | TurboJPEG C ABI | ✅ all 81 symbols |
 
@@ -118,6 +118,17 @@ if case .jfif(let jfif)? = image.metadata.first {
     print(jfif.density, jfif.unit ?? "aspect ratio only")
 }
 image.metadata = [.jfif(.init(density: (300, 300), unit: .inches))]
+```
+
+The one EXIF field a codec can act on is orientation, so that one is read:
+each of its eight values names one of the eight symmetries above. Turning a
+sideways photograph upright is therefore lossless, and costs a transform and a
+restamp:
+
+```swift
+var image: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
+image = image.transformed(image.metadata.orientation.transform)
+image.metadata.set(orientation: .up)
 ```
 
 ## Design
