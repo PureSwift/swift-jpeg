@@ -215,6 +215,73 @@ extension JPEG.Bitstream {
         return .init(truncatingIfNeeded: (window &<< (self.bit & 7)) &>> (32 - count))
     }
 
+    /// Returns the next 64 bits, left justified, zero-padded past the end.
+    ///
+    /// The bit at the read position is the *top* bit of the result, so a field
+    /// of `n` bits starting `k` bits in is `(window << k) >> (64 - n)`. That is
+    /// what makes one of these serve a whole Huffman symbol and the amplitude
+    /// that follows it: a code is at most 16 bits and an amplitude at most 16,
+    /// and the worst byte alignment costs 7, so 39 of the 64 are always enough.
+    ///
+    /// This exists because the pair costs *two* ``peek(_:)`` calls otherwise,
+    /// and peek is the largest single item in the decoder — not because it
+    /// loads more per call, but because it is called a million times a
+    /// megapixel and is deliberately not inlined. Serving both fields from one
+    /// window halves the calls.
+    ///
+    /// It is not a bit cache: it keeps no state, and two calls at the same
+    /// position return the same thing. The caches this file's history records
+    /// as failures were the other kind, carrying a register and a count that
+    /// every ``advance(_:)`` had to maintain.
+    public func window() -> UInt64 {
+        let start: Int = self.bit >> 3
+        var window: UInt64 = 0
+        if start + 8 <= self.bytes.count {
+            self.bytes.withUnsafeBufferPointer {
+                window = UInt64(
+                    bigEndian: UnsafeRawPointer($0.baseAddress! + start)
+                        .loadUnaligned(as: UInt64.self)
+                )
+            }
+        } else {
+            for offset: Int in 0 ..< 8 {
+                window <<= 8
+                let i: Int = start + offset
+                if i < self.bytes.count {
+                    window |= .init(self.bytes[i])
+                }
+            }
+        }
+        // Discarding the low `bit & 7` bits is what leaves the read position at
+        // the top. Seven of the 64 is the most this can cost.
+        return window &<< (self.bit & 7)
+    }
+
+    /// Reads a signed coefficient amplitude out of a window.
+    ///
+    /// The same `RECEIVE` and `EXTEND` pair as ``amplitude(category:)``, taking
+    /// its bits from a window the caller already holds rather than from a fresh
+    /// read.
+    ///
+    /// -   Parameters:
+    ///     -   offset: How many bits into the window the amplitude begins —
+    ///         the length of the Huffman code that preceded it.
+    ///     -   category: The magnitude category, 0 through 16.
+    public static func amplitude(of window: UInt64, at offset: Int, category: Int) -> Int {
+        guard category > 0 else {
+            return 0
+        }
+        let raw: Int = .init(
+            truncatingIfNeeded: (window &<< offset) &>> (64 - category)
+        )
+        // A leading 1 bit means the value is positive and stored as-is.
+        if raw >> (category - 1) != 0 {
+            return raw
+        } else {
+            return raw - (1 << category) + 1
+        }
+    }
+
     /// Advances the read position by `count` bits.
     public mutating func advance(_ count: Int) {
         self.bit += count

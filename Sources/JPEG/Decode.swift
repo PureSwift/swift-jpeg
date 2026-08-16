@@ -274,11 +274,25 @@ extension JPEG.Data.Spectral {
         from bits: inout JPEG.Bitstream,
         predictor: inout Int32
     ) throws(JPEG.Failure) {
-        let category: Int = .init(try dc.symbol(from: &bits))
+        // One window serves the code and the amplitude that follows it. Reading
+        // them separately cost two calls into the bit reader per coefficient,
+        // and those calls were the largest single item in the decoder — not for
+        // what they compute, but because there are a million of them and the
+        // reader is deliberately not inlined. A code is at most 16 bits and an
+        // amplitude at most 16, so both always fit one 64-bit window whatever
+        // the byte alignment.
+        let head: UInt64 = bits.window()
+        guard let code: (symbol: UInt8, length: Int) = dc.symbol(in: head) else {
+            throw .decoding(.invalidEntropyCodedSymbol)
+        }
+        let category: Int = .init(code.symbol)
         guard category <= 16 else {
             throw .decoding(.invalidEntropyCodedSymbol)
         }
-        predictor &+= .init(bits.amplitude(category: category))
+        predictor &+= .init(
+            JPEG.Bitstream.amplitude(of: head, at: code.length, category: category)
+        )
+        bits.advance(code.length + category)
         coefficients[0] = .init(truncatingIfNeeded: predictor)
 
         // The zigzag order is reached through a pointer, taken once for the whole
@@ -292,11 +306,19 @@ extension JPEG.Data.Spectral {
             var z: Int = 1
             ac:
             while z < 64 {
-                let symbol: UInt8 = try ac.symbol(from: &bits)
-                let run: Int = .init(symbol >> 4)
-                let size: Int = .init(symbol & 0x0F)
+                // The same one-window pair as the DC coefficient above, and
+                // this is the loop that matters: it runs once per nonzero
+                // coefficient in the image, where the DC path runs once per
+                // block.
+                let head: UInt64 = bits.window()
+                guard let code: (symbol: UInt8, length: Int) = ac.symbol(in: head) else {
+                    throw .decoding(.invalidEntropyCodedSymbol)
+                }
+                let run: Int = .init(code.symbol >> 4)
+                let size: Int = .init(code.symbol & 0x0F)
 
                 guard size > 0 else {
+                    bits.advance(code.length)
                     if run == 15 {
                         // ZRL: sixteen zeros, and the run continues.
                         z += 16
@@ -311,8 +333,12 @@ extension JPEG.Data.Spectral {
                     throw .decoding(.invalidEntropyCodedSymbol)
                 }
 
-                coefficients[zigzag[z]] =
-                    .init(truncatingIfNeeded: bits.amplitude(category: size))
+                coefficients[zigzag[z]] = .init(
+                    truncatingIfNeeded: JPEG.Bitstream.amplitude(
+                        of: head, at: code.length, category: size
+                    )
+                )
+                bits.advance(code.length + size)
                 z += 1
             }
         }

@@ -235,6 +235,40 @@ extension JPEG.Table.Huffman {
     /// is nearly all of them: canonical assignment gives the shortest codes to
     /// the commonest symbols. Longer ones fall back to walking the bits, which
     /// is correct but costs a peek per bit.
+    /// Resolves one symbol from a window, without consuming anything.
+    ///
+    /// The same decoding procedure as ``symbol(from:)``, reading its bits from
+    /// a window the caller holds instead of from the reader. The caller gets
+    /// the code's length back so it can advance past the symbol and its
+    /// amplitude together, which is the point: that pair is two reads
+    /// otherwise, and reads are what the entropy decoder spends its time on.
+    ///
+    /// The fallback for codes longer than eight bits is cheaper here than in
+    /// the reader-based form, which walks a bit at a time and costs a read per
+    /// bit. A code of `n` bits is simply the top `n` bits of the window, so
+    /// this indexes them directly. `maxcode` is -1 at any length carrying no
+    /// codes, and a code is never negative, so those lengths fall through
+    /// without needing a separate test.
+    ///
+    /// -   Returns:
+    ///     The symbol and the bit length of the code that encoded it, or `nil`
+    ///     if no code of any length matches — a corrupt stream.
+    public func symbol(in window: UInt64) -> (symbol: UInt8, length: Int)? {
+        let entry: UInt16 = self.lookup[.init(UInt8(truncatingIfNeeded: window >> 56))]
+        let length: Int = .init(entry & 0xFF)
+        if length > 0 {
+            return (.init(truncatingIfNeeded: entry >> 8), length)
+        }
+
+        for length: Int in 1 ... 16 {
+            let code: Int = .init(truncatingIfNeeded: window &>> (64 - length))
+            if code <= self.maxcode[length] {
+                return (self.values[self.offset[length] + code - self.mincode[length]], length)
+            }
+        }
+        return nil
+    }
+
     public func symbol(from bits: inout JPEG.Bitstream) throws(JPEG.Failure) -> UInt8 {
         let entry: UInt16 = self.lookup[.init(bits.peek(8))]
         let length: Int = .init(entry & 0xFF)
