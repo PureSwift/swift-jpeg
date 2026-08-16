@@ -440,10 +440,37 @@ extension JPEG.Data.Planar {
                               fy == 49152 ? 3 : 1,
                               scratch.baseAddress!
                           )
-                          for i: Int in 0 ..< 2 * pairs {
-                              values[output] = scratch[i]
-                              output += stride
+                          // The scatter from the contiguous scratch row into
+                          // the interleaved output. The third strided copy in
+                          // the codec, and it takes the shape the other two
+                          // measured into: pointers walked forward, eight
+                          // per iteration, because a body of one load and one
+                          // store is all loop overhead otherwise.
+                          let count: Int = 2 * pairs
+                          var source: UnsafePointer<UInt16> = .init(scratch.baseAddress!)
+                          var destination: UnsafeMutablePointer<UInt16> =
+                              values.baseAddress! + output
+                          var i: Int = 0
+                          while i + 8 <= count {
+                              destination[0] = source[0]
+                              destination[stride] = source[1]
+                              destination[2 * stride] = source[2]
+                              destination[3 * stride] = source[3]
+                              destination[4 * stride] = source[4]
+                              destination[5 * stride] = source[5]
+                              destination[6 * stride] = source[6]
+                              destination[7 * stride] = source[7]
+                              destination += 8 * stride
+                              source += 8
+                              i += 8
                           }
+                          while i < count {
+                              destination.pointee = source.pointee
+                              destination += stride
+                              source += 1
+                              i += 1
+                          }
+                          output += count * stride
                           k += pairs
                           x += 2 * pairs
                       } else if x + 1 < upper {
