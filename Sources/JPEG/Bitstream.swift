@@ -233,6 +233,19 @@ extension JPEG.Bitstream {
     /// position return the same thing. The caches this file's history records
     /// as failures were the other kind, carrying a register and a count that
     /// every ``advance(_:)`` had to maintain.
+    ///
+    /// Inlined always, which is the opposite of what ``peek(_:)`` wants and was
+    /// measured rather than assumed after that one. Whole decode of a megapixel
+    /// 4:2:0 image: 1447.9M instructions with no attribute, 1447.9M with
+    /// `@inline(never)` — the optimizer was already leaving it out of line —
+    /// and 1406.3M inlined, −2.87%.
+    ///
+    /// The two disagree because they are called differently. A peek is called
+    /// from everywhere and its body is small enough that inlining it bloats
+    /// every caller; a window is taken at four sites, all of them the top of a
+    /// hot loop, and inlining lets the 64 bits stay in a register instead of
+    /// being returned and re-spilled.
+    @inline(__always)
     public func window() -> UInt64 {
         let start: Int = self.bit >> 3
         var window: UInt64 = 0
