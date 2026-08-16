@@ -223,6 +223,12 @@ extension JPEG.Data.Spectral {
         // kernel is documented as a startup setting, so reading it once here
         // is also the only reading that could be coherent.
         let kernel: JPEG.Kernel.InverseTransform = JPEG.Kernel.inverseTransform
+        // The fused dequantize-and-transform, if one is installed, and only at
+        // full size — a reduced scale transforms fewer coefficients per block
+        // and has no fused form. Read here for the same reason the other
+        // kernel pointers are.
+        let fused: JPEG.Kernel.DequantizeInverseTransform? =
+            n == 8 ? JPEG.Kernel.dequantizeInverseTransform : nil
 
         let planes: [JPEG.Data.Planar<Format>.Plane] = self.planes.map { plane in
             let size: (x: Int, y: Int) = (x: plane.blocks.x * n, y: plane.blocks.y * n)
@@ -261,18 +267,32 @@ extension JPEG.Data.Spectral {
                     let extent: Int = plane.blocks.x * n
                     for by: Int in 0 ..< plane.blocks.y {
                         for bx: Int in 0 ..< plane.blocks.x {
-                            plane.withBlock(x: bx, y: by) { levels in
-                                for z: Int in 0 ..< 64 {
-                                    coefficients[z] = .init(levels[z]) * .init(factors[z])
+                            if let fused: JPEG.Kernel.DequantizeInverseTransform = fused {
+                                // The 64 intermediate coefficients never reach
+                                // memory: the multiply happens in the kernel's
+                                // registers on the way into the transform.
+                                plane.withBlock(x: bx, y: by) { levels in
+                                    fused(
+                                        levels.baseAddress!,
+                                        factors.baseAddress!,
+                                        .init(precision),
+                                        samples.baseAddress!
+                                    )
                                 }
+                            } else {
+                                plane.withBlock(x: bx, y: by) { levels in
+                                    for z: Int in 0 ..< 64 {
+                                        coefficients[z] = .init(levels[z]) * .init(factors[z])
+                                    }
+                                }
+                                JPEG.IDCT.transform(
+                                    .init(coefficients),
+                                    precision: precision,
+                                    size: n,
+                                    into: samples,
+                                    kernel: kernel
+                                )
                             }
-                            JPEG.IDCT.transform(
-                                .init(coefficients),
-                                precision: precision,
-                                size: n,
-                                into: samples,
-                                kernel: kernel
-                            )
 
                             // Both sides of a row are contiguous — `n` samples
                             // of the staging buffer, `n` samples of the plane —

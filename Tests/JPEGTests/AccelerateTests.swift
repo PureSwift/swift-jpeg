@@ -112,6 +112,102 @@ struct AccelerateTests {
         #expect(worst == 0, "worst deviation \(worst) over \(blocks) blocks")
     }
 
+    /// The fused dequantize-and-transform against the two steps it replaces.
+    ///
+    /// Held to bit equality, not to a tolerance. It is the same transform over
+    /// the same products; the only difference is that the products stay in
+    /// registers. Any disagreement is a defect, not rounding.
+    ///
+    /// The factors are drawn across the whole `UInt16` range and the levels
+    /// across the whole `Int16` range on purpose. Their product is at most
+    /// 2147385345, which is inside `Int32` by about 98,000 — a margin thin
+    /// enough that a kernel widening to the wrong lane type, or the scalar
+    /// path being changed to a narrower one, shows up here rather than on some
+    /// future image.
+    @Test("fused dequantize and transform matches")
+    func fusedDequantize() {
+        var generator: Generator = .init(seed: 0xDEC0DE)
+        var worst: Int = 0
+        var blocks: Int = 0
+
+        Self.accelerated { installed in
+            guard let fused: JPEG.Kernel.DequantizeInverseTransform =
+                JPEG.Kernel.dequantizeInverseTransform
+            else {
+                // No fused kernel on this machine; the engine takes the two
+                // step path and there is nothing to compare against.
+                _ = installed
+                return
+            }
+
+            for round: Int in 0 ..< 4096 {
+                var levels: [Int16] = .init(repeating: 0, count: 64)
+                var factors: [UInt16] = .init(repeating: 0, count: 64)
+                for z: Int in 0 ..< 64 {
+                    // Every round exercises a different corner. The extremes
+                    // are what pin the 32-bit product bound.
+                    switch round % 4 {
+                    case 0:
+                        factors[z] = .init(truncatingIfNeeded: generator.next() % 255 + 1)
+                        levels[z] = .init(truncatingIfNeeded: generator.next() % 2048) - 1024
+                    case 1:
+                        factors[z] = .max
+                        levels[z] = z % 2 == 0 ? .max : .min
+                    case 2:
+                        factors[z] = 1
+                        levels[z] = .init(truncatingIfNeeded: generator.next())
+                    default:
+                        factors[z] = .init(truncatingIfNeeded: generator.next())
+                        levels[z] = .init(truncatingIfNeeded: generator.next() % 512) - 256
+                    }
+                }
+                // Only a few nonzero coefficients in the common rounds, which
+                // is what survives quantization on a real image.
+                if round % 4 == 0 {
+                    for z: Int in 9 ..< 64 {
+                        levels[JPEG.zigzag[z]] = 0
+                    }
+                }
+
+                var fast: [UInt16] = .init(repeating: 0, count: 64)
+                fast.withUnsafeMutableBufferPointer { samples in
+                    levels.withUnsafeBufferPointer { levels in
+                        factors.withUnsafeBufferPointer { factors in
+                            fused(
+                                levels.baseAddress!,
+                                factors.baseAddress!,
+                                8,
+                                samples.baseAddress!
+                            )
+                        }
+                    }
+                }
+
+                // The two steps, exactly as the engine performs them when no
+                // fused kernel is installed.
+                var coefficients: [Int32] = .init(repeating: 0, count: 64)
+                for z: Int in 0 ..< 64 {
+                    coefficients[z] = .init(levels[z]) * .init(factors[z])
+                }
+                var separate: [UInt16] = .init(repeating: 0, count: 64)
+                separate.withUnsafeMutableBufferPointer { samples in
+                    coefficients.withUnsafeBufferPointer { coefficients in
+                        JPEG.Kernel.inverseTransform(
+                            coefficients.baseAddress!, 8, samples.baseAddress!
+                        )
+                    }
+                }
+
+                for (a, b): (UInt16, UInt16) in zip(fast, separate) {
+                    worst = max(worst, abs(Int(a) - Int(b)))
+                }
+                blocks += 1
+            }
+        }
+
+        #expect(worst == 0, "worst deviation \(worst) over \(blocks) blocks")
+    }
+
     /// The accelerated forward transform against the portable one.
     @Test("forward transform matches")
     func forward() {

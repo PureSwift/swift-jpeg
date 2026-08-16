@@ -84,6 +84,24 @@ void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
                            int32_t precision,
                            uint16_t *JPEG_NONNULL samples);
 
+/* 64 quantized levels and their 64 quantization factors, row-major, to 64
+ * samples, row-major — dequantization and the inverse transform in one call.
+ *
+ * `samples[i]` is what `jpeg_accel_idct8_avx2` produces from
+ * `levels[i] * factors[i]`, and the caller holds this to bit equality with
+ * that pair rather than to a tolerance: it is the same transform, reached
+ * without the intermediate block touching memory.
+ *
+ * A level fits int16 and a factor uint16, so the product is at most 2147385345
+ * and fits a signed 32-bit lane.
+ *
+ * Full size only. The reduced scales have no factorization and dequantize
+ * through the engine's own path. */
+void jpeg_accel_dequantize_idct8_avx2(const int16_t *JPEG_NONNULL levels,
+                                      const uint16_t *JPEG_NONNULL factors,
+                                      int32_t precision,
+                                      uint16_t *JPEG_NONNULL samples);
+
 /* 64 samples, row-major, to 64 coefficients, row-major. */
 void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
                            int32_t precision,

@@ -90,6 +90,20 @@ extension JPEG {
             _ interleaved: UnsafeMutablePointer<UInt16>
         ) -> Void
 
+        /// Dequantizes 64 levels and inverse transforms them in one call.
+        ///
+        /// -   Parameters:
+        ///     -   levels: 64 quantized coefficients, row-major.
+        ///     -   factors: The 64 quantization factors, row-major.
+        ///     -   precision: The sample precision, in bits.
+        ///     -   samples: Where to write 64 samples, row-major.
+        public typealias DequantizeInverseTransform = @convention(c) (
+            _ levels: UnsafePointer<Int16>,
+            _ factors: UnsafePointer<UInt16>,
+            _ precision: Int32,
+            _ samples: UnsafeMutablePointer<UInt16>
+        ) -> Void
+
         /// Produces one row of 2x-upsampled chroma for a plane that is halved
         /// vertically too — 4:2:0, the case that dominates everything anything
         /// decodes.
@@ -156,6 +170,23 @@ extension JPEG {
         /// and nil is how it knows to use it.
         public nonisolated(unsafe)
         static var upsamplePairs: UpsamplePairs? = nil
+
+        /// The fused dequantize-and-transform in use, or nil for none.
+        ///
+        /// Optional for the reason ``upsamplePairs`` is, and not the reason
+        /// the four defaulted entries are. Those name work the engine has to
+        /// do either way, so a portable implementation behind the pointer is
+        /// exactly what it would have run. This one names *two* steps the
+        /// engine performs separately, and fusing them is only worth a
+        /// dispatch when the multiply gets vector-cheap — the engine does not
+        /// vectorize its dequantize loop and cannot be made to from Swift, so
+        /// there is no portable twin to put here. Nil means dequantize and
+        /// transform in two steps, which is what the engine has always done.
+        ///
+        /// Full size only. A reduced-scale decode transforms fewer
+        /// coefficients per block and takes the engine's own path regardless.
+        public nonisolated(unsafe)
+        static var dequantizeInverseTransform: DequantizeInverseTransform? = nil
 
         /// A description of the installed kernels, for diagnostics.
         ///
@@ -237,6 +268,7 @@ extension JPEG.Kernel {
         Self.colorTransform = Self.portableColor
         Self.forwardColorTransform = Self.portableForwardColor
         Self.upsamplePairs = nil
+        Self.dequantizeInverseTransform = nil
         Self.description = "portable"
     }
 }

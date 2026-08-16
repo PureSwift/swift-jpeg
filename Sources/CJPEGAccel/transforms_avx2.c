@@ -148,13 +148,13 @@ TARGET_AVX2 static inline void idct_pass(__m256i *d, int drop) {
 }
 
 TARGET_AVX2
-void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
-                           int32_t precision, uint16_t *JPEG_NONNULL samples) {
-    __m256i d[8];
-    for (int i = 0; i < 8; i++) {
-        d[i] = _mm256_loadu_si256((const __m256i *)(coefficients + i * 8));
-    }
-
+/* The transform proper, once the coefficients are in registers.
+ *
+ * Shared by the two entry points below, which differ only in how they reach
+ * this point: one loads dequantized coefficients, the other dequantizes on the
+ * way in. Everything after the load is identical, so it is written once. */
+TARGET_AVX2 static inline void idct8_body(__m256i *d, int32_t precision,
+                                          uint16_t *samples) {
     /* A vector is one row of frequencies, so combining vectors is the column
      * pass. The row pass has to combine lanes, which is what the transpose is
      * for; the second transpose puts the result back in row order. */
@@ -182,6 +182,43 @@ void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
         packed = _mm256_permute4x64_epi64(packed, 0xD8);
         _mm256_storeu_si256((__m256i *)(samples + i * 8), packed);
     }
+}
+
+TARGET_AVX2
+void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
+                           int32_t precision, uint16_t *JPEG_NONNULL samples) {
+    __m256i d[8];
+    for (int i = 0; i < 8; i++) {
+        d[i] = _mm256_loadu_si256((const __m256i *)(coefficients + i * 8));
+    }
+    idct8_body(d, precision, samples);
+}
+
+/* Dequantize and transform in one pass.
+ *
+ * The multiply is eight lanes at a time and the 64 intermediate coefficients
+ * never reach memory. Splitting the two costs a scalar multiply per
+ * coefficient — Swift does not vectorize that loop, which was checked by
+ * disassembling it — plus a 256-byte store and reload of the block between
+ * them.
+ *
+ * A level is at most 32767 in magnitude and a factor at most 65535, so the
+ * product is at most 2147385345 and fits a signed 32-bit lane. That is the
+ * same bound the scalar path already relies on. */
+TARGET_AVX2
+void jpeg_accel_dequantize_idct8_avx2(const int16_t *JPEG_NONNULL levels,
+                                      const uint16_t *JPEG_NONNULL factors,
+                                      int32_t precision,
+                                      uint16_t *JPEG_NONNULL samples) {
+    __m256i d[8];
+    for (int i = 0; i < 8; i++) {
+        const __m256i level = _mm256_cvtepi16_epi32(
+            _mm_loadu_si128((const __m128i *)(levels + i * 8)));
+        const __m256i factor = _mm256_cvtepu16_epi32(
+            _mm_loadu_si128((const __m128i *)(factors + i * 8)));
+        d[i] = _mm256_mullo_epi32(level, factor);
+    }
+    idct8_body(d, precision, samples);
 }
 
 /* One 8-point forward transform across eight vectors. */
@@ -273,6 +310,13 @@ void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
 void jpeg_accel_idct8_avx2(const int32_t *JPEG_NONNULL coefficients,
                            int32_t precision, uint16_t *JPEG_NONNULL samples) {
     (void)coefficients; (void)precision; (void)samples;
+}
+
+void jpeg_accel_dequantize_idct8_avx2(const int16_t *JPEG_NONNULL levels,
+                                      const uint16_t *JPEG_NONNULL factors,
+                                      int32_t precision,
+                                      uint16_t *JPEG_NONNULL samples) {
+    (void)levels; (void)factors; (void)precision; (void)samples;
 }
 
 void jpeg_accel_fdct8_avx2(const uint16_t *JPEG_NONNULL samples,
