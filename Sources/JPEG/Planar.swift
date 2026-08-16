@@ -21,6 +21,29 @@ extension JPEG.Data {
             self.buffer = .init(repeating: 0, count: size.x * size.y)
         }
 
+        /// Creates a plane and fills every sample of it in one pass.
+        ///
+        /// For the callers that are about to write the whole plane anyway —
+        /// the inverse transform writes every block of it — so that zeroing
+        /// it first is not paid for. On a megapixel image that was six
+        /// megabytes of stores nothing read.
+        ///
+        /// -   Parameter fill:
+        ///     Receives the buffer, `size.x * size.y` samples, and must write
+        ///     every one of them. What it leaves unwritten is uninitialized
+        ///     memory, not zero.
+        init(
+            size: (x: Int, y: Int),
+            filling fill: (UnsafeMutableBufferPointer<UInt16>) -> Void
+        ) {
+            self.size = size
+            self.buffer = .init(unsafeUninitializedCapacity: size.x * size.y) {
+                buffer, initialized in
+                fill(buffer)
+                initialized = size.x * size.y
+            }
+        }
+
         /// Runs `body` on this plane's samples, row-major.
         ///
         /// The only way to read a whole plane from outside this module. The
@@ -202,18 +225,22 @@ extension JPEG.Data.Spectral {
         let kernel: JPEG.Kernel.InverseTransform = JPEG.Kernel.inverseTransform
 
         let planes: [JPEG.Data.Planar<Format>.Plane] = self.planes.map { plane in
-            var output: JPEG.Data.Planar<Format>.Plane = .init(
-                size: (x: plane.blocks.x * n, y: plane.blocks.y * n)
-            )
+            let size: (x: Int, y: Int) = (x: plane.blocks.x * n, y: plane.blocks.y * n)
 
             guard let table: JPEG.Table.Quantization = self.quanta[plane.quanta] else {
-                for y: Int in 0 ..< output.size.y {
-                    for x: Int in 0 ..< output.size.x {
-                        output[x: x, y: y] = .init(1 << (precision - 1))
-                    }
+                // Every sample, so the plane can be handed to the caller
+                // unzeroed like the one below.
+                let midpoint: UInt16 = .init(1 << (precision - 1))
+                return .init(size: size) { destination in
+                    destination.update(repeating: midpoint)
                 }
-                return output
             }
+
+            // Into an unzeroed plane: every block is written below, and a
+            // plane is exactly `blocks * n` samples on each axis, so nothing
+            // is left for a zero fill to cover. Skipping it is worth the
+            // stores of the whole plane.
+            return .init(size: size) { destination in
 
             // Two scratch blocks for the whole plane rather than four heap
             // allocations per block. On a megapixel image that is the
@@ -226,7 +253,6 @@ extension JPEG.Data.Spectral {
             withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { coefficients in
                 withUnsafeTemporaryAllocation(of: UInt16.self, capacity: 64) { samples in
                     table.factors.withUnsafeBufferPointer { factors in
-                    output.withUnsafeMutableSamples { destination in
                     // A plane is exactly `blocks * n` samples in each direction,
                     // so every block lands wholly inside it and the write is a
                     // straight strided copy. The block writer this replaces
@@ -265,11 +291,9 @@ extension JPEG.Data.Spectral {
                         }
                     }
                     }
-                    }
                 }
             }
-
-            return output
+            }
         }
 
         var layout: JPEG.Layout<Format> = self.layout

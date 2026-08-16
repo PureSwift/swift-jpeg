@@ -171,4 +171,48 @@ struct DecodeTests {
             _ = try JPEG.Data.Rectangular<JPEG.Common>.decompress(stream: &stream)
         }
     }
+
+    /// A plane whose quantization table was never defined decodes to a flat
+    /// midpoint rather than failing.
+    ///
+    /// The documented behavior, and previously unexercised: nothing in the
+    /// fixtures omits a table. It matters now because the plane it fills is
+    /// no longer zeroed first, so this is the test that proves the midpoint
+    /// fill covers every sample — a partial fill would leave uninitialized
+    /// memory where zeros used to be.
+    @Test
+    func undefinedTableDecodesToMidpoint() throws {
+        let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(
+            try Self.resource("subsampled", "jpg")
+        )
+        // Take the tables away after decoding the coefficients, so the
+        // coefficients are real and only the dequantization has nothing to
+        // work with.
+        var stripped: JPEG.Data.Spectral<JPEG.Common> = spectral
+        stripped.quanta = [:]
+
+        let planar: JPEG.Data.Planar<JPEG.Common> = stripped.decomposed()
+        let midpoint: UInt16 = 128
+        for plane: Int in planar.planes.indices {
+            var count: Int = 0
+            planar.planes[plane].withSamples { samples in
+                for i: Int in samples.indices where samples[i] != midpoint {
+                    count += 1
+                }
+            }
+            #expect(count == 0, "plane \(plane): \(count) samples are not the midpoint")
+        }
+
+        // And at a reduced scale, which changes the plane's size.
+        let small: JPEG.Data.Planar<JPEG.Common> = stripped.decomposed(scale: 3)
+        for plane: Int in small.planes.indices {
+            var count: Int = 0
+            small.planes[plane].withSamples { samples in
+                for i: Int in samples.indices where samples[i] != midpoint {
+                    count += 1
+                }
+            }
+            #expect(count == 0, "plane \(plane) at scale 3: \(count) samples are not the midpoint")
+        }
+    }
 }
