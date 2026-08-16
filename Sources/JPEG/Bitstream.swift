@@ -96,44 +96,59 @@ extension JPEG.Bitstream {
     /// | a 64-bit cache refilled a byte at a time | 240,909,963 | +37.7% |
     /// | a 64-bit cache refilled 32 bits at a time | 217,317,738 | +24.2% |
     ///
-    /// The reason is that this function is already most of a bit cache. It reads
-    /// three bytes with three *independent* conditional loads and keeps no state
-    /// at all. A cache replaces those loads with state that every ``advance(_:)``
-    /// must update — shift the register, decrement the count, test whether to
-    /// refill, and refill at a shift amount derived from the count — and that
-    /// chain is serial, where the three loads are not. libjpeg gains from a cache
-    /// because the alternative it is compared against extracts one bit at a time;
-    /// against a windowed peek there is nothing left to win.
+    /// The reason is that this function is already most of a bit cache. It loads
+    /// its window and keeps no state at all. A cache replaces that load with
+    /// state that every ``advance(_:)`` must update — shift the register,
+    /// decrement the count, test whether to refill, and refill at a shift amount
+    /// derived from the count — and that chain is serial, where the load is not.
+    /// libjpeg gains from a cache because the alternative it is compared against
+    /// extracts one bit at a time; against a windowed peek there is nothing left
+    /// to win.
     ///
     /// The measurement is worth more than the conclusion: if this is tried again,
     /// the number to beat is in the table, and `BitstreamTests` holds a
     /// differential check against a bit-at-a-time reference that a broken refill
     /// will fail.
     ///
-    /// Three smaller things were tried on the shape below. Instruction counts for
-    /// the whole entropy decode of a megapixel 4:2:0 image, which is the figure
-    /// worth moving:
+    /// Several smaller things were tried on the shape below. Instruction counts
+    /// for the whole decode of a megapixel 4:2:0 image, which is the figure worth
+    /// moving:
     ///
     /// | | instructions | |
     /// | --- | --- | --- |
-    /// | a conditional load per byte | 211.9M | |
-    /// | the whole-window fast path below | 200.6M | −5.3% |
-    /// | that, plus `@inline(__always)` | 215.3M | +1.6% |
-    /// | that, with a 64-bit window | 204.5M | −3.5% |
+    /// | three byte loads, a mask, no attribute | 1920.4M | |
+    /// | that, plus `@inline(never)` | 1919.6M | −0.04% |
+    /// | one unaligned load, no mask, no attribute | 1927.6M | +0.37% |
+    /// | one unaligned load, no mask, `@inline(never)` | 1801.8M | **−6.18%** |
     ///
-    /// Inlining it is worse, and worse by more than the fast path is better — so
-    /// the two together measure flat, which is how the fast path nearly got
-    /// discarded. This is the opposite of ``BitstreamWriter/write(_:count:)``,
-    /// where inlining was the single largest win on the encode side; the
-    /// difference is that a write is eighteen instructions and a peek is closer
-    /// to thirty, at four call sites rather than one. Widening the window to 64
-    /// bits is also the opposite of what helped the writer's accumulator, and for
-    /// the same reason in reverse: nothing here shifts by an amount that reaches
-    /// 32, so there is no width check to make cheaper, and the wider loads and
-    /// mask just cost more.
+    /// The last two rows are why the attribute is there, and it is load bearing
+    /// rather than decoration. The arithmetic below is a third smaller than what
+    /// it replaced, and *on its own that made things worse*: a smaller body
+    /// crossed the optimizer's threshold and got inlined into all four callers,
+    /// and inlining this is a loss. That was already known — an earlier round
+    /// measured `@inline(__always)` at +1.6% — but the attribute that records it
+    /// was never written down, so the knowledge did not survive contact with a
+    /// body that changed size. Pinning it costs nothing when the optimizer agrees
+    /// and 6% when it does not.
+    ///
+    /// This is the opposite of ``BitstreamWriter/write(_:count:)``, where inlining
+    /// was the single largest win on the encode side; the difference is that a
+    /// write is eighteen instructions and a peek is closer to forty, at four call
+    /// sites rather than one.
+    ///
+    /// Two things the current shape gets that the three-load version could not.
+    /// The window is left justified, so the field comes out in two shifts with no
+    /// mask — `(1 << count) - 1` was not one instruction, because Swift's shift
+    /// yields zero rather than undefined for an over-wide amount and so carried a
+    /// compare and a select. And both shift amounts are provably in range, so they
+    /// use the masking operators and re-check nothing. An earlier note here said a
+    /// 64-bit window did not pay because "nothing here shifts by an amount that
+    /// reaches 32"; that is no longer true of the 32-bit form, and the 64-bit one
+    /// has not been retried against it.
     ///
     /// -   Parameter count:
     ///     A bit count, at most 16 — the longest Huffman code T.81 permits.
+    @inline(never)
     public func peek(_ count: Int) -> UInt16 {
         precondition(count <= 16, "cannot peek more than 16 bits")
         // Not the special case for magnitude category 0 it looks like — that
@@ -149,24 +164,46 @@ extension JPEG.Bitstream {
             return 0
         }
 
-        // A 16-bit window can straddle three bytes when unaligned, so gather 24
-        // bits and shift the requested field down out of them.
+        // The window is kept left-justified — the byte at the read position
+        // occupies the *top* eight bits — which is what lets the field come
+        // out in two shifts with no mask. Aligning left by `bit & 7` puts the
+        // wanted field at the top of the word, and a logical right shift by
+        // `32 - count` brings it down zero-filled. The mask this replaces was
+        // `(1 << count) - 1`, and it was not one instruction: Swift's shift
+        // yields zero rather than undefined for an over-wide amount, so it
+        // carried a compare and a select.
+        //
+        // Both shift amounts are provably in range — `bit & 7` is at most 7,
+        // and `count` is 1 through 16 by the precondition and the guard above,
+        // so `32 - count` is 16 through 31. That is why they are the masking
+        // operators: an ordinary shift would re-check what is already known.
         let start: Int = self.bit >> 3
         var window: UInt32 = 0
-        if start + 3 <= self.bytes.count {
-            // All three bytes are present, which is every position but the last
-            // two of the interval — so one compare covers what would otherwise
-            // be a compare and a branch per byte, and the loads issue in
-            // parallel instead of behind them. The other branch still has to
-            // exist: a decoder is allowed to read past the end and get zeros,
-            // and it does, on the final block of every scan.
+        if start + 4 <= self.bytes.count {
+            // One unaligned 32-bit load and a byte swap, rather than three
+            // byte loads and the shift-or tree to assemble them. A 16-bit
+            // field can straddle three bytes, so three is the minimum that
+            // would do; reading the fourth costs nothing on any processor this
+            // runs on and turns the gather into a single instruction pair.
+            //
+            // The other branch still has to exist: a decoder is allowed to
+            // read past the end and get zeros, and it does, on the final block
+            // of every scan.
             self.bytes.withUnsafeBufferPointer {
-                window = .init($0[start]) << 16
-                    | .init($0[start + 1]) << 8
-                    | .init($0[start + 2])
+                // `UInt32(bigEndian:)` rather than `.bigEndian` — the two are
+                // the same byte swap, but this one says what is meant: the
+                // bytes in the stream are most significant first, and this
+                // interprets them, which is also why it is correct on a
+                // big-endian machine where it compiles to nothing.
+                window = UInt32(
+                    bigEndian: UnsafeRawPointer($0.baseAddress! + start)
+                        .loadUnaligned(as: UInt32.self)
+                )
             }
         } else {
-            for offset: Int in 0 ..< 3 {
+            // Left-justified the same way, so the arithmetic below is shared:
+            // four bytes from the read position, zero past the end.
+            for offset: Int in 0 ..< 4 {
                 window <<= 8
                 let i: Int = start + offset
                 if i < self.bytes.count {
@@ -175,9 +212,7 @@ extension JPEG.Bitstream {
             }
         }
 
-        let shift: Int = 24 - (self.bit & 7) - count
-        let mask: UInt32 = (1 << UInt32(count)) - 1
-        return .init((window >> UInt32(shift)) & mask)
+        return .init(truncatingIfNeeded: (window &<< (self.bit & 7)) &>> (32 - count))
     }
 
     /// Advances the read position by `count` bits.
