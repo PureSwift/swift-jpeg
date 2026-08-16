@@ -250,9 +250,19 @@ extension JPEG.Table.Huffman {
     /// codes, and a code is never negative, so those lengths fall through
     /// without needing a separate test.
     ///
+    /// Inlined always, and the attribute is insurance rather than a win. Whole
+    /// decode of a megapixel 4:2:0 image: 1406.3M instructions with no
+    /// attribute, 1402.9M inlined (−0.24%), and 1468.3M with `@inline(never)`
+    /// (+4.4%). The optimizer already chooses to inline this, so pinning it
+    /// buys almost nothing today — but the difference between its choosing
+    /// right and choosing wrong is 4.4%, and the history of ``JPEG/Bitstream/peek(_:)``
+    /// in this codebase is a body that changed size, crossed the threshold, and
+    /// silently took a 6% regression with it.
+    ///
     /// -   Returns:
     ///     The symbol and the bit length of the code that encoded it, or `nil`
     ///     if no code of any length matches — a corrupt stream.
+    @inline(__always)
     public func symbol(in window: UInt64) -> (symbol: UInt8, length: Int)? {
         let entry: UInt16 = self.lookup[.init(UInt8(truncatingIfNeeded: window >> 56))]
         let length: Int = .init(entry & 0xFF)
