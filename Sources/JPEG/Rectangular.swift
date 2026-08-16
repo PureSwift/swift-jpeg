@@ -236,12 +236,48 @@ extension JPEG.Data.Planar {
                 // megapixel image and worth writing through a raw pointer.
                 source.withUnsafeSamples { samples in
                     values.withUnsafeMutableBufferPointer { values in
+                        let source: UnsafePointer<UInt16> = samples.baseAddress!
+                        let destination: UnsafeMutablePointer<UInt16> = values.baseAddress!
                         for y: Int in 0 ..< height {
-                            var output: Int = y * width * stride + plane
-                            let input: Int = y * extent.x
-                            for x: Int in 0 ..< width {
-                                values[output] = samples[input + x]
+                            // Two pointers walked forward rather than two
+                            // indices recomputed, and unrolled: the body is one
+                            // load and one store, so at one pixel per iteration
+                            // the increment, compare and branch were most of it.
+                            //
+                            // Eight rather than more, and the reason is the
+                            // interesting part. Instructions for the whole
+                            // decode fall monotonically with the unroll factor —
+                            // 1801.8M at one, 1757.3M at four, 1742.8M at eight,
+                            // 1735.6M at sixteen — but wall clock stops
+                            // improving after eight and sixteen is no better
+                            // than eight on this machine. This loop is a strided
+                            // scatter over six megabytes: it is bound by the
+                            // stores, not by the arithmetic around them, so past
+                            // the point where the loop overhead is amortized the
+                            // only thing a wider body buys is instruction cache
+                            // pressure. Eight is where the two curves part.
+                            var output: UnsafeMutablePointer<UInt16> =
+                                destination + (y * width * stride + plane)
+                            var input: UnsafePointer<UInt16> = source + y * extent.x
+                            var x: Int = 0
+                            while x + 8 <= width {
+                                output[0] = input[0]
+                                output[stride] = input[1]
+                                output[2 * stride] = input[2]
+                                output[3 * stride] = input[3]
+                                output[4 * stride] = input[4]
+                                output[5 * stride] = input[5]
+                                output[6 * stride] = input[6]
+                                output[7 * stride] = input[7]
+                                output += 8 * stride
+                                input += 8
+                                x += 8
+                            }
+                            while x < width {
+                                output.pointee = input.pointee
                                 output += stride
+                                input += 1
+                                x += 1
                             }
                         }
                     }
