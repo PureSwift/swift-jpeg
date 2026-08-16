@@ -17,7 +17,7 @@ stock TurboJPEG header can link and use.
 | Lossless cropping and custom filters | ✅ |
 | 16-bit precision | ✅ |
 | Baseline sequential decode | ✅ |
-| Extended sequential decode | ⚠️ shares the baseline path, untested |
+| Extended sequential decode | ✅ |
 | Grayscale, 4:4:4, 4:2:2, 4:2:0 | ✅ |
 | Restart intervals | ✅ |
 | Interpolated chroma upsampling | ✅ |
