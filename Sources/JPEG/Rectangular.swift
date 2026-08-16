@@ -218,9 +218,44 @@ extension JPEG.Data.Planar {
         let width: Int = self.layout.width
         let height: Int = self.layout.height
         let stride: Int = self.planes.count
-        let scale: JPEG.Component.Sampling = self.layout.scale
 
-        var values: [UInt16] = .init(repeating: 0, count: width * height * stride)
+        // Uninitialized, not zeroed. Plane `p` writes every index congruent to
+        // `p` modulo the stride, and there is one plane per residue, so the
+        // planes below partition the buffer and every element is written
+        // exactly once. Zeroing it first was six megabytes of stores on a
+        // megapixel image that nothing ever read.
+        //
+        // The obligation that comes with saying so: any future path that
+        // leaves an element unwritten publishes uninitialized memory rather
+        // than a zero. `fill(_:width:height:stride:)` is where that invariant
+        // has to hold, and the loops there all run the full width and height.
+        let values: [UInt16] = .init(
+            unsafeUninitializedCapacity: width * height * stride
+        ) { buffer, initialized in
+            self.fill(buffer, width: width, height: height, stride: stride)
+            initialized = width * height * stride
+        }
+
+        return .init(
+            width: width,
+            height: height,
+            layout: self.layout,
+            values: values,
+            metadata: self.metadata
+        )
+    }
+
+    /// Writes every sample of the interleaved image into `values`.
+    ///
+    /// Every element is written, which is what lets the caller hand this
+    /// uninitialized storage.
+    private func fill(
+        _ values: UnsafeMutableBufferPointer<UInt16>,
+        width: Int,
+        height: Int,
+        stride: Int
+    ) {
+        let scale: JPEG.Component.Sampling = self.layout.scale
 
         for (plane, component): (Int, JPEG.Component) in self.layout.planes.enumerated() {
             let sampling: JPEG.Component.Sampling = component.sampling
@@ -235,50 +270,48 @@ extension JPEG.Data.Planar {
                 // every subsampled image, so it is a million samples on a
                 // megapixel image and worth writing through a raw pointer.
                 source.withUnsafeSamples { samples in
-                    values.withUnsafeMutableBufferPointer { values in
-                        let source: UnsafePointer<UInt16> = samples.baseAddress!
-                        let destination: UnsafeMutablePointer<UInt16> = values.baseAddress!
-                        for y: Int in 0 ..< height {
-                            // Two pointers walked forward rather than two
-                            // indices recomputed, and unrolled: the body is one
-                            // load and one store, so at one pixel per iteration
-                            // the increment, compare and branch were most of it.
-                            //
-                            // Eight rather than more, and the reason is the
-                            // interesting part. Instructions for the whole
-                            // decode fall monotonically with the unroll factor —
-                            // 1801.8M at one, 1757.3M at four, 1742.8M at eight,
-                            // 1735.6M at sixteen — but wall clock stops
-                            // improving after eight and sixteen is no better
-                            // than eight on this machine. This loop is a strided
-                            // scatter over six megabytes: it is bound by the
-                            // stores, not by the arithmetic around them, so past
-                            // the point where the loop overhead is amortized the
-                            // only thing a wider body buys is instruction cache
-                            // pressure. Eight is where the two curves part.
-                            var output: UnsafeMutablePointer<UInt16> =
-                                destination + (y * width * stride + plane)
-                            var input: UnsafePointer<UInt16> = source + y * extent.x
-                            var x: Int = 0
-                            while x + 8 <= width {
-                                output[0] = input[0]
-                                output[stride] = input[1]
-                                output[2 * stride] = input[2]
-                                output[3 * stride] = input[3]
-                                output[4 * stride] = input[4]
-                                output[5 * stride] = input[5]
-                                output[6 * stride] = input[6]
-                                output[7 * stride] = input[7]
-                                output += 8 * stride
-                                input += 8
-                                x += 8
-                            }
-                            while x < width {
-                                output.pointee = input.pointee
-                                output += stride
-                                input += 1
-                                x += 1
-                            }
+                    let source: UnsafePointer<UInt16> = samples.baseAddress!
+                    let destination: UnsafeMutablePointer<UInt16> = values.baseAddress!
+                    for y: Int in 0 ..< height {
+                        // Two pointers walked forward rather than two
+                        // indices recomputed, and unrolled: the body is one
+                        // load and one store, so at one pixel per iteration
+                        // the increment, compare and branch were most of it.
+                        //
+                        // Eight rather than more, and the reason is the
+                        // interesting part. Instructions for the whole
+                        // decode fall monotonically with the unroll factor —
+                        // 1801.8M at one, 1757.3M at four, 1742.8M at eight,
+                        // 1735.6M at sixteen — but wall clock stops
+                        // improving after eight and sixteen is no better
+                        // than eight on this machine. This loop is a strided
+                        // scatter over six megabytes: it is bound by the
+                        // stores, not by the arithmetic around them, so past
+                        // the point where the loop overhead is amortized the
+                        // only thing a wider body buys is instruction cache
+                        // pressure. Eight is where the two curves part.
+                        var output: UnsafeMutablePointer<UInt16> =
+                            destination + (y * width * stride + plane)
+                        var input: UnsafePointer<UInt16> = source + y * extent.x
+                        var x: Int = 0
+                        while x + 8 <= width {
+                            output[0] = input[0]
+                            output[stride] = input[1]
+                            output[2 * stride] = input[2]
+                            output[3 * stride] = input[3]
+                            output[4 * stride] = input[4]
+                            output[5 * stride] = input[5]
+                            output[6 * stride] = input[6]
+                            output[7 * stride] = input[7]
+                            output += 8 * stride
+                            input += 8
+                            x += 8
+                        }
+                        while x < width {
+                            output.pointee = input.pointee
+                            output += stride
+                            input += 1
+                            x += 1
                         }
                     }
                 }
@@ -331,154 +364,144 @@ extension JPEG.Data.Planar {
             // after. One row, allocated once per plane.
             withUnsafeTemporaryAllocation(of: UInt16.self, capacity: Swift.max(width, 1)) { scratch in
             source.withUnsafeSamples { samples in
-              values.withUnsafeMutableBufferPointer { values in
-                lefts.withUnsafeBufferPointer { lefts in
-                  rights.withUnsafeBufferPointer { rights in
-                    fractions.withUnsafeBufferPointer { fractions in
-                    for y: Int in 0 ..< height {
-                        let v: Int = Self.source(y, sampling.y, scale.y)
-                        // Arithmetic shift floors, including for the negative
-                        // coordinates the half-sample offset produces at the
-                        // top and left margins, so the fraction stays in 0 ..< 1.
-                        let row: Int = v >> 16
-                        let fy: Int32 = .init(v - (row << 16))
+              lefts.withUnsafeBufferPointer { lefts in
+                rights.withUnsafeBufferPointer { rights in
+                  fractions.withUnsafeBufferPointer { fractions in
+                  for y: Int in 0 ..< height {
+                      let v: Int = Self.source(y, sampling.y, scale.y)
+                      // Arithmetic shift floors, including for the negative
+                      // coordinates the half-sample offset produces at the
+                      // top and left margins, so the fraction stays in 0 ..< 1.
+                      let row: Int = v >> 16
+                      let fy: Int32 = .init(v - (row << 16))
 
-                        // Clamping the two source rows once per output row
-                        // removes two bounds checks from every pixel.
-                        let above: Int = Swift.min(Swift.max(row, 0), extent.y - 1) * extent.x
-                        let below: Int = Swift.min(Swift.max(row + 1, 0), extent.y - 1) * extent.x
+                      // Clamping the two source rows once per output row
+                      // removes two bounds checks from every pixel.
+                      let above: Int = Swift.min(Swift.max(row, 0), extent.y - 1) * extent.x
+                      let below: Int = Swift.min(Swift.max(row + 1, 0), extent.y - 1) * extent.x
 
-                        /// One output pixel, reading its columns from the tables
-                        /// so that the clamps at the plane's edges are already
-                        /// folded in. Correct everywhere, and the only path for
-                        /// any ratio other than a halving.
-                        @inline(__always)
-                        func tabulated(_ x: Int) -> UInt16 {
-                            let left: Int = lefts[x]
-                            let right: Int = rights[x]
-                            return Self.blend(
-                                .init(samples[above + left]),
-                                .init(samples[above + right]),
-                                .init(samples[below + left]),
-                                .init(samples[below + right]),
-                                fx: fractions[x],
-                                fy: fy
-                            )
-                        }
+                      /// One output pixel, reading its columns from the tables
+                      /// so that the clamps at the plane's edges are already
+                      /// folded in. Correct everywhere, and the only path for
+                      /// any ratio other than a halving.
+                      @inline(__always)
+                      func tabulated(_ x: Int) -> UInt16 {
+                          let left: Int = lefts[x]
+                          let right: Int = rights[x]
+                          return Self.blend(
+                              .init(samples[above + left]),
+                              .init(samples[above + right]),
+                              .init(samples[below + left]),
+                              .init(samples[below + right]),
+                              fx: fractions[x],
+                              fy: fy
+                          )
+                      }
 
-                        var output: Int = y * width * stride + plane
-                        var x: Int = 0
-                        while x < interior.lowerBound {
-                            values[output] = tabulated(x)
-                            output += stride
-                            x += 1
-                        }
+                      var output: Int = y * width * stride + plane
+                      var x: Int = 0
+                      while x < interior.lowerBound {
+                          values[output] = tabulated(x)
+                          output += stride
+                          x += 1
+                      }
 
-                        // Two output pixels at a time. Under a halving the even
-                        // pixel interpolates source columns k-1 and k at three
-                        // quarters and the odd one columns k and k+1 at one
-                        // quarter, so the fractions are constants rather than a
-                        // third table and the walk over the source row is
-                        // sequential instead of indexed.
-                        //
-                        // A pair spans three source columns, but only the last of
-                        // them is new: the pair at k+1 reads columns k, k+1 and
-                        // k+2, and the first two are the ones this iteration just
-                        // read. So they are carried in registers and rotated,
-                        // which makes the loop cost two loads per pair rather
-                        // than six. The values are the same either way, and the
-                        // resampling test holds this loop against the tabulated
-                        // one to prove it.
-                        var k: Int = x >> 1
-                        let upper: Int = interior.upperBound
-                        // Under a halving in both directions the vertical
-                        // fraction is a quarter or three quarters, so the row
-                        // weights come out of which side of the source pair
-                        // this output row falls on — and the whole interior is
-                        // the shape the row kernel takes, if one is installed.
-                        if halvedRows, x + 1 < upper,
-                           let kernel: JPEG.Kernel.UpsamplePairs = rowKernel
-                        {
-                            let pairs: Int = ((upper - x - 2) >> 1) + 1
-                            kernel(
-                                samples.baseAddress! + above + k,
-                                samples.baseAddress! + below + k,
-                                pairs,
-                                fy == 49152 ? 1 : 3,
-                                fy == 49152 ? 3 : 1,
-                                scratch.baseAddress!
-                            )
-                            for i: Int in 0 ..< 2 * pairs {
-                                values[output] = scratch[i]
-                                output += stride
-                            }
-                            k += pairs
-                            x += 2 * pairs
-                        } else if x + 1 < upper {
-                            var a: Int32 = .init(samples[above + k - 1])
-                            var b: Int32 = .init(samples[above + k])
-                            var c: Int32 = .init(samples[below + k - 1])
-                            var d: Int32 = .init(samples[below + k])
+                      // Two output pixels at a time. Under a halving the even
+                      // pixel interpolates source columns k-1 and k at three
+                      // quarters and the odd one columns k and k+1 at one
+                      // quarter, so the fractions are constants rather than a
+                      // third table and the walk over the source row is
+                      // sequential instead of indexed.
+                      //
+                      // A pair spans three source columns, but only the last of
+                      // them is new: the pair at k+1 reads columns k, k+1 and
+                      // k+2, and the first two are the ones this iteration just
+                      // read. So they are carried in registers and rotated,
+                      // which makes the loop cost two loads per pair rather
+                      // than six. The values are the same either way, and the
+                      // resampling test holds this loop against the tabulated
+                      // one to prove it.
+                      var k: Int = x >> 1
+                      let upper: Int = interior.upperBound
+                      // Under a halving in both directions the vertical
+                      // fraction is a quarter or three quarters, so the row
+                      // weights come out of which side of the source pair
+                      // this output row falls on — and the whole interior is
+                      // the shape the row kernel takes, if one is installed.
+                      if halvedRows, x + 1 < upper,
+                         let kernel: JPEG.Kernel.UpsamplePairs = rowKernel
+                      {
+                          let pairs: Int = ((upper - x - 2) >> 1) + 1
+                          kernel(
+                              samples.baseAddress! + above + k,
+                              samples.baseAddress! + below + k,
+                              pairs,
+                              fy == 49152 ? 1 : 3,
+                              fy == 49152 ? 3 : 1,
+                              scratch.baseAddress!
+                          )
+                          for i: Int in 0 ..< 2 * pairs {
+                              values[output] = scratch[i]
+                              output += stride
+                          }
+                          k += pairs
+                          x += 2 * pairs
+                      } else if x + 1 < upper {
+                          var a: Int32 = .init(samples[above + k - 1])
+                          var b: Int32 = .init(samples[above + k])
+                          var c: Int32 = .init(samples[below + k - 1])
+                          var d: Int32 = .init(samples[below + k])
 
-                            if halvedRows {
-                                let v: (Int32, Int32) = fy == 49152 ? (1, 3) : (3, 1)
-                                while x + 1 < upper {
-                                    let e: Int32 = .init(samples[above + k + 1])
-                                    let f: Int32 = .init(samples[below + k + 1])
+                          if halvedRows {
+                              let v: (Int32, Int32) = fy == 49152 ? (1, 3) : (3, 1)
+                              while x + 1 < upper {
+                                  let e: Int32 = .init(samples[above + k + 1])
+                                  let f: Int32 = .init(samples[below + k + 1])
 
-                                    values[output] = Self.blend(a, b, c, d, h: (1, 3), v: v)
-                                    output += stride
-                                    values[output] = Self.blend(b, e, d, f, h: (3, 1), v: v)
-                                    output += stride
+                                  values[output] = Self.blend(a, b, c, d, h: (1, 3), v: v)
+                                  output += stride
+                                  values[output] = Self.blend(b, e, d, f, h: (3, 1), v: v)
+                                  output += stride
 
-                                    a = b
-                                    b = e
-                                    c = d
-                                    d = f
-                                    k += 1
-                                    x += 2
-                                }
-                            } else {
-                                while x + 1 < upper {
-                                    let e: Int32 = .init(samples[above + k + 1])
-                                    let f: Int32 = .init(samples[below + k + 1])
+                                  a = b
+                                  b = e
+                                  c = d
+                                  d = f
+                                  k += 1
+                                  x += 2
+                              }
+                          } else {
+                              while x + 1 < upper {
+                                  let e: Int32 = .init(samples[above + k + 1])
+                                  let f: Int32 = .init(samples[below + k + 1])
 
-                                    values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
-                                    output += stride
-                                    values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
-                                    output += stride
+                                  values[output] = Self.blend(a, b, c, d, fx: 49152, fy: fy)
+                                  output += stride
+                                  values[output] = Self.blend(b, e, d, f, fx: 16384, fy: fy)
+                                  output += stride
 
-                                    a = b
-                                    b = e
-                                    c = d
-                                    d = f
-                                    k += 1
-                                    x += 2
-                                }
-                            }
-                        }
+                                  a = b
+                                  b = e
+                                  c = d
+                                  d = f
+                                  k += 1
+                                  x += 2
+                              }
+                          }
+                      }
 
-                        while x < width {
-                            values[output] = tabulated(x)
-                            output += stride
-                            x += 1
-                        }
-                    }
-                    }
+                      while x < width {
+                          values[output] = tabulated(x)
+                          output += stride
+                          x += 1
+                      }
+                  }
                   }
                 }
               }
             }
             }
         }
-
-        return .init(
-            width: width,
-            height: height,
-            layout: self.layout,
-            values: values,
-            metadata: self.metadata
-        )
     }
 }
 
