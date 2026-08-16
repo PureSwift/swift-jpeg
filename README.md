@@ -27,7 +27,7 @@ stock TurboJPEG header can link and use.
 | Progressive encoding | ✅ |
 | 12-bit precision | ✅ |
 | Scaled and cropped decoding | ✅ |
-| JFIF / EXIF metadata | ❌ not yet |
+| JFIF / EXIF metadata | ✅ JFIF typed; EXIF and comments carried intact |
 | Lossless transformation | ✅ |
 | TurboJPEG C ABI | ✅ all 81 symbols |
 
@@ -106,6 +106,18 @@ instead:
 ```swift
 let spectral: JPEG.Data.Spectral<JPEG.Common> = try .decompress(stream: &stream)
 let planar: JPEG.Data.Planar<JPEG.Common> = spectral.decomposed()
+```
+
+Metadata rides on the image. Application segments and comments are collected in
+stream order on decode and written back on encode, so decode-edit-encode
+preserves them without the caller touching anything. JFIF is typed; EXIF and
+everything else is carried intact rather than interpreted:
+
+```swift
+if case .jfif(let jfif)? = image.metadata.first {
+    print(jfif.density, jfif.unit ?? "aspect ratio only")
+}
+image.metadata = [.jfif(.init(density: (300, 300), unit: .inches))]
 ```
 
 ## Design
