@@ -209,13 +209,13 @@ extension JPEG.Data.Spectral {
     ///         names must be present.
     ///     -   restartInterval: MCUs between restart markers, or 0 for none.
     ///     -   metadata: Extra segments to write after the JFIF header, in
-    ///         order. Application segments carrying an ICC profile or EXIF
-    ///         block go here; the codec neither reads nor validates them.
+    ///         order, following whatever the image itself carries. The codec
+    ///         neither reads nor validates any of them.
     public func compress<Destination>(
         stream: inout Destination,
         tables: JPEG.Tables,
         restartInterval: Int = 0,
-        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
+        metadata: [JPEG.Metadata] = []
     ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         let frame: JPEG.Header.Frame = try self.frame()
         let scan: JPEG.Header.Scan = self.scan()
@@ -234,22 +234,30 @@ extension JPEG.Data.Spectral {
 
         try stream.format(marker: .start)
 
-        // A minimal JFIF segment. Nothing in the codec needs it, but enough
+        // The image's own metadata first — what a decode put there — then the
+        // caller's extras. A JFIF among them replaces the minimal default and
+        // is written first regardless of where it sits in the collection,
+        // because JFIF requires its segment to open the stream. The default
+        // exists because nothing in the codec needs a JFIF, but enough
         // consumers assume a JPEG opens with one that omitting it causes
         // trouble disproportionate to the sixteen bytes it costs.
-        try stream.format(
-            marker: .application(0),
-            body: [
-                0x4A, 0x46, 0x49, 0x46, 0x00,   // "JFIF\0"
-                0x01, 0x02,                     // version 1.02
-                0x00,                           // no density units
-                0x00, 0x01, 0x00, 0x01,         // 1:1 pixel aspect
-                0x00, 0x00,                     // no thumbnail
-            ]
-        )
+        let segments: [JPEG.Metadata] = self.metadata + metadata
+        let first: Int? = segments.firstIndex {
+            if case .jfif = $0 { return true } else { return false }
+        }
+        let jfif: JPEG.JFIF
+        if let index: Int = first, case .jfif(let carried) = segments[index] {
+            jfif = carried
+        } else {
+            jfif = .init()
+        }
+        try stream.format(marker: .application(0), body: jfif.serialized())
 
-        for segment: (marker: JPEG.Marker, body: [UInt8]) in metadata {
-            try stream.format(marker: segment.marker, body: segment.body)
+        for (index, segment): (Int, JPEG.Metadata) in segments.enumerated()
+            where index != first
+        {
+            let (marker, body): (JPEG.Marker, [UInt8]) = segment.segment
+            try stream.format(marker: marker, body: body)
         }
 
         // Quantization tables must precede the frame header that references
@@ -374,7 +382,7 @@ extension JPEG.Data.Planar {
         restartInterval: Int = 0,
         progressive: Bool = false,
         arithmetic: Bool = false,
-        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
+        metadata: [JPEG.Metadata] = []
     ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
@@ -431,7 +439,7 @@ extension JPEG.Data.Rectangular {
         restartInterval: Int = 0,
         progressive: Bool = false,
         arithmetic: Bool = false,
-        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
+        metadata: [JPEG.Metadata] = []
     ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         let precision: Int = self.layout.format.precision
         // Baseline is 8-bit by definition; 12-bit samples need the extended
@@ -476,7 +484,8 @@ extension JPEG.Data.Rectangular {
             selectors: self.layout.planes.indices.map { .init($0 == 0 ? 0 : 1) }
         )
 
-        let source: Self = .init(layout: layout, values: self.values)
+        var source: Self = .init(layout: layout, values: self.values)
+        source.metadata = self.metadata
         try source.spectral(quanta: quanta).compress(
             stream: &stream,
             tables: tables,

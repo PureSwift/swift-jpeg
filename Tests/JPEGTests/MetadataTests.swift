@@ -156,6 +156,72 @@ struct MetadataTests {
         #expect(jfif.density == (1, 1))
     }
 
+    /// A caller's JFIF must replace the encoder's default, and the other
+    /// segments must survive an encode-decode round trip in order.
+    @Test
+    func encodeWritesSuppliedMetadata() throws {
+        let layout: JPEG.Layout<JPEG.Common> = try .init(
+            format: .y(1, precision: 8),
+            process: .baseline,
+            width: 8,
+            height: 8,
+            sampling: [.init(x: 1, y: 1)],
+            selectors: [0]
+        )
+        var image: JPEG.Data.Rectangular<JPEG.Common> = .init(
+            layout: layout,
+            values: .init(repeating: 128, count: 64)
+        )
+        image.metadata = [
+            .jfif(.init(density: (300, 300), unit: .inches)),
+            .comment(data: [0x68, 0x69]),
+            .exif(data: [0x4D, 0x4D, 0x00, 0x2A]),
+        ]
+
+        var stream: [UInt8] = []
+        try image.compress(stream: &stream)
+        let decoded: JPEG.Data.Rectangular<JPEG.Common> = try .decompress(stream)
+
+        #expect(decoded.metadata.count == 3)
+        guard case .jfif(let jfif) = decoded.metadata.first else {
+            Issue.record("the supplied JFIF was not written: \(decoded.metadata)")
+            return
+        }
+        #expect(jfif.density == (300, 300))
+        #expect(jfif.unit == .inches)
+        guard case .comment(let text) = decoded.metadata.dropFirst().first else {
+            Issue.record("the comment was lost: \(decoded.metadata)")
+            return
+        }
+        #expect(text == [0x68, 0x69])
+        guard case .exif(let exif) = decoded.metadata.last else {
+            Issue.record("the EXIF segment was lost: \(decoded.metadata)")
+            return
+        }
+        #expect(exif == [0x4D, 0x4D, 0x00, 0x2A])
+
+        // The APP0 must be the stream's first segment, and there must be
+        // exactly one of it.
+        #expect(stream[2 ..< 4] == [0xFF, 0xE0])
+        var count: Int = 0
+        for index: Int in stream.indices.dropLast()
+            where stream[index] == 0xFF && stream[index + 1] == 0xE0
+        {
+            count += 1
+        }
+        #expect(count == 1)
+    }
+
+    /// An image with no metadata must encode exactly as it always has: one
+    /// minimal JFIF segment, byte-identical to the old hardcoded one.
+    @Test
+    func encodeDefaultsToTheMinimalSegment() throws {
+        let stream: [UInt8] = try Self.encoded()
+        #expect(stream[2 ..< 4] == [0xFF, 0xE0])
+        #expect(stream[4 ..< 6] == [0x00, 0x10])
+        #expect(.init(stream[6 ..< 6 + Self.minimal.count]) == Self.minimal)
+    }
+
     @Test
     func classifiesJFIF() {
         guard case .jfif(let jfif) = JPEG.Metadata.parse(application: 0, data: Self.minimal)

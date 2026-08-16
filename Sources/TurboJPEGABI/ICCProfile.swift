@@ -26,8 +26,8 @@ enum ICCProfile {
     /// of which the signature and chunk numbering take fourteen.
     static let chunkCapacity: Int = 65533 - headerCount
 
-    /// Splits a profile into `APP2` segment bodies.
-    static func segments(of profile: [UInt8]) -> [(marker: JPEG.Marker, body: [UInt8])] {
+    /// Splits a profile into `APP2` segments.
+    static func segments(of profile: [UInt8]) -> [JPEG.Metadata] {
         guard !profile.isEmpty else {
             return []
         }
@@ -44,7 +44,7 @@ enum ICCProfile {
             let end: Int = Swift.min(start + chunkCapacity, profile.count)
             body.append(contentsOf: profile[start ..< end])
 
-            return (marker: .application(2), body: body)
+            return .application(2, data: body)
         }
     }
 

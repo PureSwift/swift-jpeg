@@ -536,7 +536,7 @@ extension JPEG.Data.Lossless {
         predictor: JPEG.Predictor = .plane,
         transform: Int = 0,
         restartInterval: Int = 0,
-        metadata: [(marker: JPEG.Marker, body: [UInt8])] = []
+        metadata: [JPEG.Metadata] = []
     ) throws(JPEG.Failure) where Destination: JPEG.Bytestream.Destination {
         guard 0 ..< self.layout.format.precision ~= transform else {
             throw .encoding(.unsupportedPrecision(self.layout.format.precision))
@@ -552,8 +552,12 @@ extension JPEG.Data.Lossless {
         )
 
         try stream.format(marker: .start)
-        for segment: (marker: JPEG.Marker, body: [UInt8]) in metadata {
-            try stream.format(marker: segment.marker, body: segment.body)
+        // The image's own metadata, then the caller's extras — and no default
+        // JFIF, because JFIF fixes the colorspace convention of the DCT
+        // processes and says nothing about a lossless stream.
+        for segment: JPEG.Metadata in self.metadata + metadata {
+            let (marker, body): (JPEG.Marker, [UInt8]) = segment.segment
+            try stream.format(marker: marker, body: body)
         }
         // No quantization tables: there is nothing to quantize.
         try stream.format(

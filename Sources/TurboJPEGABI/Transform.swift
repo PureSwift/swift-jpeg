@@ -114,6 +114,13 @@ public func tj3Transform(
 
             var transformed: JPEG.Data.Spectral<JPEG.Common> = source.transformed(rotation)
 
+            // The engine carries the source's application segments and
+            // comments through a transform, which is libjpeg-turbo's default;
+            // COPYNONE is the caller saying not to.
+            if transform.options & TJXOPT_COPYNONE != 0 {
+                transformed.metadata = []
+            }
+
             // A transform may re-code the result progressively even when the
             // source was sequential; the coefficients are the same either way.
             let progressive: Bool = transform.options & TJXOPT_PROGRESSIVE != 0
