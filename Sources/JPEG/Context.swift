@@ -22,6 +22,8 @@ extension JPEG {
         public private(set) var frame: JPEG.Header.Frame?
         /// The image being decoded into, once a frame header has been seen.
         public private(set) var spectral: JPEG.Data.Spectral<Format>?
+        /// The metadata segments seen so far, in stream order.
+        public private(set) var metadata: [JPEG.Metadata]
 
         public init() {
             self.tables = .init()
@@ -30,6 +32,7 @@ extension JPEG {
             self.restartInterval = 0
             self.frame = nil
             self.spectral = nil
+            self.metadata = []
         }
     }
 }
@@ -62,6 +65,19 @@ extension JPEG.Context {
             case .ac:   self.conditioning.ac[entry.target] = entry.conditioning
             }
         }
+    }
+
+    /// Records an `APP`*n* segment.
+    ///
+    /// Cannot fail: an application segment that is not what its number
+    /// suggests is retained opaque rather than rejected.
+    public mutating func push(application n: Int, data: [UInt8]) {
+        self.metadata.append(.parse(application: n, data: data))
+    }
+
+    /// Records a `COM` segment.
+    public mutating func push(comment data: [UInt8]) {
+        self.metadata.append(.comment(data: data))
     }
 
     /// Applies a `DRI` segment.
@@ -121,9 +137,10 @@ extension JPEG.Data.Spectral {
     /// Decodes an image from a byte source, stopping at the end-of-image
     /// marker.
     ///
-    /// Segments the decoder has no use for — application segments, comments,
-    /// reserved markers — are skipped rather than rejected. Real files carry
-    /// plenty of them, and none affect the coefficients.
+    /// Application segments and comments are retained on the image's
+    /// ``JPEG/Data/Spectral/metadata``, in stream order — none affect the
+    /// coefficients, but density, EXIF, and comments are why callers ask for
+    /// them. Reserved markers are still skipped.
     public static func decompress<Source>(
         stream: inout Source
     ) throws(JPEG.Failure) -> Self where Source: JPEG.Bytestream.Source {
@@ -171,6 +188,11 @@ extension JPEG.Data.Spectral {
             case .height:
                 try context.push(height: data)
 
+            case .application(let n):
+                context.push(application: n, data: data)
+            case .comment:
+                context.push(comment: data)
+
             case .start:
                 // A second SOI is redundant but harmless; some encoders emit
                 // one before a thumbnail.
@@ -181,9 +203,10 @@ extension JPEG.Data.Spectral {
             }
         }
 
-        guard let spectral: Self = context.spectral else {
+        guard var spectral: Self = context.spectral else {
             throw .decoding(.missingFrameHeader)
         }
+        spectral.metadata = context.metadata
         return spectral
     }
 }

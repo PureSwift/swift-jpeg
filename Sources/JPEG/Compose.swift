@@ -213,7 +213,7 @@ extension JPEG.Data.Rectangular {
                 return output
             }
 
-        return .init(planes: planes, layout: self.layout)
+        return .init(planes: planes, layout: self.layout, metadata: self.metadata)
     }
 }
 
@@ -228,6 +228,7 @@ extension JPEG.Data.Planar {
     ) throws(JPEG.Failure) -> JPEG.Data.Spectral<Format> {
         var spectral: JPEG.Data.Spectral<Format> = .init(layout: self.layout)
         spectral.quanta = quanta
+        spectral.metadata = self.metadata
 
         let precision: Int = self.layout.format.precision
 

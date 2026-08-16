@@ -123,10 +123,14 @@ extension JPEG.Data {
         public private(set) var planes: [Plane]
         /// The image geometry and component structure.
         public private(set) var layout: JPEG.Layout<Format>
+        /// The metadata segments carried over from the stream this image was
+        /// decoded from, in stream order.
+        public var metadata: [JPEG.Metadata]
 
-        init(planes: [Plane], layout: JPEG.Layout<Format>) {
+        init(planes: [Plane], layout: JPEG.Layout<Format>, metadata: [JPEG.Metadata] = []) {
             self.planes = planes
             self.layout = layout
+            self.metadata = metadata
         }
     }
 }
@@ -262,6 +266,6 @@ extension JPEG.Data.Spectral {
         layout.width = (self.layout.width * n + 7) / 8
         layout.height = (self.layout.height * n + 7) / 8
 
-        return .init(planes: planes, layout: layout)
+        return .init(planes: planes, layout: layout, metadata: self.metadata)
     }
 }

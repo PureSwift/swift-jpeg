@@ -92,6 +92,70 @@ struct MetadataTests {
         #expect(kept == tiff)
     }
 
+    /// A gray 8×8 image, encoded by this library's own encoder.
+    static func encoded() throws -> [UInt8] {
+        let layout: JPEG.Layout<JPEG.Common> = try .init(
+            format: .y(1, precision: 8),
+            process: .baseline,
+            width: 8,
+            height: 8,
+            sampling: [.init(x: 1, y: 1)],
+            selectors: [0]
+        )
+        let image: JPEG.Data.Rectangular<JPEG.Common> = .init(
+            layout: layout,
+            values: .init(repeating: 128, count: 64)
+        )
+        var stream: [UInt8] = []
+        try image.compress(stream: &stream)
+        return stream
+    }
+
+    /// Splices a segment into a stream after the two-byte start-of-image
+    /// marker.
+    static func spliced(
+        _ stream: [UInt8], marker: UInt8, body: [UInt8]
+    ) -> [UInt8] {
+        let length: Int = body.count + 2
+        return .init(stream[..<2])
+            + [0xFF, marker, .init(length >> 8), .init(length & 0xFF)]
+            + body
+            + stream[2...]
+    }
+
+    /// The decoder must retain application segments and comments, classified
+    /// and in stream order, all the way down to the rectangular tier.
+    @Test
+    func decodeRetainsSegments() throws {
+        let tiff: [UInt8] = [0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08]
+        var stream: [UInt8] = try Self.encoded()
+        // Spliced in reverse so they end up: EXIF, comment, then the JFIF the
+        // encoder wrote.
+        stream = Self.spliced(stream, marker: 0xFE, body: [0x68, 0x69])
+        stream = Self.spliced(
+            stream, marker: 0xE1, body: [0x45, 0x78, 0x69, 0x66, 0x00, 0x00] + tiff
+        )
+
+        let image: JPEG.Data.Rectangular<JPEG.Common> = try .decompress(stream)
+        #expect(image.metadata.count == 3)
+
+        guard case .exif(let data) = image.metadata.first else {
+            Issue.record("EXIF was not first: \(image.metadata)")
+            return
+        }
+        #expect(data == tiff)
+        guard case .comment(let text) = image.metadata.dropFirst().first else {
+            Issue.record("the comment was not second: \(image.metadata)")
+            return
+        }
+        #expect(text == [0x68, 0x69])
+        guard case .jfif(let jfif) = image.metadata.last else {
+            Issue.record("the JFIF segment was not retained: \(image.metadata)")
+            return
+        }
+        #expect(jfif.density == (1, 1))
+    }
+
     @Test
     func classifiesJFIF() {
         guard case .jfif(let jfif) = JPEG.Metadata.parse(application: 0, data: Self.minimal)

@@ -77,6 +77,10 @@ extension JPEG.Data {
         /// leaving the coefficients quantized is what makes lossless editing
         /// possible.
         public var quanta: [JPEG.Table.Quantization.Key: JPEG.Table.Quantization]
+        /// The metadata segments of the stream this image was decoded from, in
+        /// stream order, or whatever the caller wants written when it is
+        /// encoded.
+        public var metadata: [JPEG.Metadata]
     }
 }
 
@@ -186,6 +190,7 @@ extension JPEG.Data.Spectral {
         }
         self.layout = layout
         self.quanta = [:]
+        self.metadata = []
     }
 
     /// The image size, in samples.

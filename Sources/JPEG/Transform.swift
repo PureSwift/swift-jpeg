@@ -220,6 +220,10 @@ extension JPEG.Data.Spectral {
         output.quanta = transform.swapsAxes
             ? self.quanta.mapValues { $0.transposed() }
             : self.quanta
+        // Metadata travels too, untouched: an EXIF orientation is arguably
+        // stale after a rotation, but rewriting another format's fields is not
+        // this library's call to make.
+        output.metadata = self.metadata
 
         for plane: Int in self.planes.indices {
             // The block grid of the *trimmed* image, which is what gets
@@ -283,6 +287,7 @@ extension JPEG.Data.Spectral {
 
         var output: Self = .init(layout: layout)
         output.quanta = self.quanta
+        output.metadata = self.metadata
 
         for plane: Int in self.planes.indices {
             let sampling: JPEG.Component.Sampling = self.layout.planes[plane].sampling

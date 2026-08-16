@@ -16,12 +16,22 @@ extension JPEG.Data {
 
         /// Samples, row-major, `layout.planes.count` per pixel.
         public private(set) var values: [UInt16]
+        /// The metadata segments carried over from the stream this image was
+        /// decoded from, in stream order.
+        public var metadata: [JPEG.Metadata]
 
-        init(width: Int, height: Int, layout: JPEG.Layout<Format>, values: [UInt16]) {
+        init(
+            width: Int,
+            height: Int,
+            layout: JPEG.Layout<Format>,
+            values: [UInt16],
+            metadata: [JPEG.Metadata] = []
+        ) {
             self.width = width
             self.height = height
             self.layout = layout
             self.values = values
+            self.metadata = metadata
         }
     }
 }
@@ -82,7 +92,8 @@ extension JPEG.Data.Rectangular {
             width: region.width,
             height: region.height,
             layout: layout,
-            values: values
+            values: values,
+            metadata: self.metadata
         )
     }
 
@@ -418,7 +429,13 @@ extension JPEG.Data.Planar {
             }
         }
 
-        return .init(width: width, height: height, layout: self.layout, values: values)
+        return .init(
+            width: width,
+            height: height,
+            layout: self.layout,
+            values: values,
+            metadata: self.metadata
+        )
     }
 }
 

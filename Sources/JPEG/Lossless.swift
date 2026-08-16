@@ -99,9 +99,13 @@ extension JPEG.Data {
         /// One plane per component, at that component's own resolution, padded
         /// out to whole minimum coded units.
         public private(set) var planes: [JPEG.Data.Planar<Format>.Plane]
+        /// The metadata segments of the stream this image was decoded from, in
+        /// stream order.
+        public var metadata: [JPEG.Metadata]
 
         init(layout: JPEG.Layout<Format>) {
             self.layout = layout
+            self.metadata = []
             // A lossless minimum coded unit is `scale` *samples*, not `scale`
             // blocks of 64 — there are no blocks. Everything about the geometry
             // follows from that one difference.
@@ -137,7 +141,7 @@ extension JPEG.Data.Lossless {
     /// samples. It exists so the rest of the library — upsampling, colour
     /// conversion, the C boundary — works on lossless images unchanged.
     public func planar() -> JPEG.Data.Planar<Format> {
-        .init(planes: self.planes, layout: self.layout)
+        .init(planes: self.planes, layout: self.layout, metadata: self.metadata)
     }
 
     /// Decodes to interleaved full-resolution samples.
@@ -421,6 +425,7 @@ extension JPEG.Data.Lossless {
         var restartInterval: Int = 0
         var image: Self?
         var pending: (JPEG.Marker, [UInt8])?
+        var metadata: [JPEG.Metadata] = []
 
         loop:
         while true {
@@ -470,14 +475,20 @@ extension JPEG.Data.Lossless {
                 image = decoding
                 pending = next
 
+            case .application(let n):
+                metadata.append(.parse(application: n, data: data))
+            case .comment:
+                metadata.append(.comment(data: data))
+
             default:
                 continue loop
             }
         }
 
-        guard let image: Self = image else {
+        guard var image: Self = image else {
             throw .decoding(.missingFrameHeader)
         }
+        image.metadata = metadata
         return image
     }
 
