@@ -194,6 +194,12 @@ extension JPEG.Data.Spectral {
     public func decomposed(scale n: Int) -> JPEG.Data.Planar<Format> {
         precondition(1 ... 8 ~= n)
         let precision: Int = self.layout.format.precision
+        // Once for the image, not once per block. This is a mutable global,
+        // and Swift guards a read of one with a dynamic exclusivity check —
+        // which per block cost more than the transform dispatch itself. The
+        // kernel is documented as a startup setting, so reading it once here
+        // is also the only reading that could be coherent.
+        let kernel: JPEG.Kernel.InverseTransform = JPEG.Kernel.inverseTransform
 
         let planes: [JPEG.Data.Planar<Format>.Plane] = self.planes.map { plane in
             var output: JPEG.Data.Planar<Format>.Plane = .init(
@@ -235,7 +241,11 @@ extension JPEG.Data.Spectral {
                                 }
                             }
                             JPEG.IDCT.transform(
-                                .init(coefficients), precision: precision, size: n, into: samples
+                                .init(coefficients),
+                                precision: precision,
+                                size: n,
+                                into: samples,
+                                kernel: kernel
                             )
 
                             // Both sides of a row are contiguous — `n` samples

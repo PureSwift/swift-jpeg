@@ -108,11 +108,20 @@ extension JPEG.IDCT {
     /// twenty-odd thousand blocks — enough that the allocator, not the
     /// transform, becomes the cost. Decoding uses this and reuses one buffer
     /// for the whole plane.
+    /// -   Parameter kernel:
+    ///     The full-size kernel to dispatch to. Defaulted for callers that
+    ///     transform one block, and passed explicitly by callers that
+    ///     transform a plane: reading ``JPEG/Kernel/inverseTransform`` is a
+    ///     read of a mutable global, and Swift guards those with a dynamic
+    ///     exclusivity check. Per block that check cost *more than this
+    ///     function did* — 18.7M instructions against 13.5M over a megapixel
+    ///     decode — so the read belongs outside the block loop.
     static func transform(
         _ coefficients: UnsafeBufferPointer<Int32>,
         precision: Int,
         size n: Int,
-        into samples: UnsafeMutableBufferPointer<UInt16>
+        into samples: UnsafeMutableBufferPointer<UInt16>,
+        kernel: JPEG.Kernel.InverseTransform = JPEG.Kernel.inverseTransform
     ) {
         precondition(coefficients.count == 64)
         precondition(1 ... 8 ~= n)
@@ -122,9 +131,7 @@ extension JPEG.IDCT {
         // enough that writing seven more of them would be seven more chances to
         // be subtly wrong for no measurable gain.
         if n == 8 {
-            JPEG.Kernel.inverseTransform(
-                coefficients.baseAddress!, .init(precision), samples.baseAddress!
-            )
+            kernel(coefficients.baseAddress!, .init(precision), samples.baseAddress!)
             return
         }
 

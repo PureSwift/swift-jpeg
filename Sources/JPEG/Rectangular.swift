@@ -283,6 +283,13 @@ extension JPEG.Data.Planar {
                 interior = 0 ..< 0
             }
 
+            // Read once for the plane rather than once per row. A mutable
+            // global carries a dynamic exclusivity check on every read, and at
+            // row granularity that check is a measurable share of a kernel
+            // call that only produces one row. The same hoist as the one in
+            // `decomposed(scale:)`, one tier down.
+            let rowKernel: JPEG.Kernel.UpsamplePairs? = JPEG.Kernel.upsamplePairs
+
             // Where the interior goes through the installed row kernel, it
             // lands here first and is scattered into the interleaved output
             // after. One row, allocated once per plane.
@@ -354,7 +361,7 @@ extension JPEG.Data.Planar {
                         // this output row falls on — and the whole interior is
                         // the shape the row kernel takes, if one is installed.
                         if halvedRows, x + 1 < upper,
-                           let kernel: JPEG.Kernel.UpsamplePairs = JPEG.Kernel.upsamplePairs
+                           let kernel: JPEG.Kernel.UpsamplePairs = rowKernel
                         {
                             let pairs: Int = ((upper - x - 2) >> 1) + 1
                             kernel(

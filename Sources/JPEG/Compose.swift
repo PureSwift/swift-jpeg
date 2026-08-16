@@ -231,6 +231,11 @@ extension JPEG.Data.Planar {
         spectral.metadata = self.metadata
 
         let precision: Int = self.layout.format.precision
+        // Read once for the image rather than once per block: this is a
+        // mutable global, and the dynamic exclusivity check Swift puts on a
+        // read of one is pure overhead at block granularity. The mirror of the
+        // hoist in `decomposed(scale:)`.
+        let kernel: JPEG.Kernel.ForwardTransform = JPEG.Kernel.forwardTransform
 
         for plane: Int in self.layout.planes.indices {
             let selector: JPEG.Table.Quantization.Key = self.layout.planes[plane].selector
@@ -268,7 +273,7 @@ extension JPEG.Data.Planar {
                                     )
                             }
 
-                            JPEG.Kernel.forwardTransform(
+                            kernel(
                                 samples.baseAddress!,
                                 .init(precision),
                                 coefficients.baseAddress!
