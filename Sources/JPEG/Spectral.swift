@@ -116,6 +116,22 @@ extension JPEG.Data.SpectralPlane {
     /// Generic over the thrown type rather than `rethrows`. A plain `rethrows`
     /// propagates `any Error`, which would put an existential back into the
     /// engine and take Embedded Swift away again.
+    ///
+    /// This reaches the array once per block, which looks like exactly the
+    /// waste that hoisting the quantization factors and the kernel pointers out
+    /// of their loops removed. Hoisting it the same way — one accessor over the
+    /// whole plane, and the dequantizer indexing `levels[block + z]` — measures
+    /// **7.1% worse** on a megapixel decode, 1283.7M instructions against
+    /// 1198.2M.
+    ///
+    /// The difference is what the callee can see. Rebasing hands the body a
+    /// buffer of exactly sixty-four elements starting at zero, and the
+    /// dequantize loop over it vectorizes; an index into the whole plane is an
+    /// address the optimizer cannot prove anything about, and the same loop
+    /// comes out scalar. The slice is not overhead here, it is the information.
+    ///
+    /// So this is deliberate, and the number is here because the change is an
+    /// attractive one to make twice.
     func withBlock<T, E>(
         x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) throws(E) -> T
     ) throws(E) -> T {
