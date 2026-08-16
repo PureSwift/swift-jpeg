@@ -53,6 +53,7 @@ extension Instance {
             : TJCS_RGB.rawValue
         self.parameters[TJPARAM_PROGRESSIVE.id] = 0
         self.parameters[TJPARAM_LOSSLESS.id] = 1
+        self.record(density: Instance.jfif(of: image.metadata))
 
         // Scaling and cropping are meaningless here: a scaled inverse transform
         // needs coefficients, and this process produces none. libjpeg-turbo

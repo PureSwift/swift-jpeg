@@ -271,9 +271,33 @@ int main(void)
     check(tj3GetICCProfile(d, &recovered, &recoveredSize) == -1,
           "and reports that it has no profile");
 
-    tj3Free(jpeg); tj3Free(jpeg12); tj3Free(tagged);
+    printf("pixel density\n");
+    tj3SetICCProfile(c, NULL, 0); /* stop embedding the profile from above */
+    check(tj3DecompressHeader(d, jpeg, jpegSize) == 0, "an untouched image reads");
+    check(tj3Get(d, TJPARAM_XDENSITY) == 1 && tj3Get(d, TJPARAM_YDENSITY) == 1,
+          "and reports the default 1x1 density");
+    check(tj3Get(d, TJPARAM_DENSITYUNITS) == 0, "with no units");
+
+    tj3Set(c, TJPARAM_XDENSITY, 300);
+    tj3Set(c, TJPARAM_YDENSITY, 600);
+    tj3Set(c, TJPARAM_DENSITYUNITS, 1);
+    unsigned char *dense = NULL; size_t denseSize = 0;
+    check(tj3Compress8(c, pixels, width, 0, height, TJPF_RGB, &dense, &denseSize) == 0,
+          "an image compresses with a density set");
+    check(tj3DecompressHeader(d, dense, denseSize) == 0, "it reads back");
+    check(tj3Get(d, TJPARAM_XDENSITY) == 300 && tj3Get(d, TJPARAM_YDENSITY) == 600,
+          "the density survives the round trip");
+    check(tj3Get(d, TJPARAM_DENSITYUNITS) == 1, "and so does its unit");
+    unsigned char *densePixels = malloc((size_t)width * height * 3);
+    check(tj3Decompress8(d, dense, denseSize, densePixels, 0, TJPF_RGB) == 0,
+          "a full decompress also reads it");
+    check(tj3Get(d, TJPARAM_XDENSITY) == 300 && tj3Get(d, TJPARAM_DENSITYUNITS) == 1,
+          "and reports the same density");
+
+    tj3Free(jpeg); tj3Free(jpeg12); tj3Free(tagged); tj3Free(dense);
     tj3Destroy(c); tj3Destroy(d); tj3Destroy(c12); tj3Destroy(d12);
     free(pixels); free(cropped); free(whole); free(wide); free(back); free(profile);
+    free(densePixels);
 
     printf("\n%s\n", failures ? "FAILURES" : "all checks passed");
     return failures ? 1 : 0;

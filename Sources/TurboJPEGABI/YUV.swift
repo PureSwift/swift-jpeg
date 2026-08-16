@@ -366,7 +366,8 @@ public func tj3CompressFromYUVPlanes8(
         try planar.compress(
             stream: &encoded,
             quality: .init(instance.parameter(TJPARAM_QUALITY, default: 95)),
-            progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0
+            progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0,
+            metadata: instance.compressionMetadata
         )
 
         if instance.parameter(TJPARAM_NOREALLOC) != 0, let destination = jpegBuf.pointee {

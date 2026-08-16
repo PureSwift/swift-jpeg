@@ -30,12 +30,19 @@ extension Instance {
         try stream.start()
 
         var found: JPEG.Header.Frame? = nil
+        var jfif: JPEG.JFIF? = nil
         segments: while true {
             let (marker, data): (JPEG.Marker, [UInt8]) = try stream.segment()
             switch marker {
             case .frame(let process):
                 found = try JPEG.Header.Frame.parse(data, process: process)
                 break segments
+            case .application(0):
+                // JFIF requires its segment to open the stream, so the first
+                // APP0 is the only one that can be it.
+                if jfif == nil {
+                    jfif = JPEG.JFIF.parse(data)
+                }
             case .scan, .end:
                 // A scan or an end of image before any frame header is a
                 // malformed stream. There is nothing to report and nothing to
@@ -83,7 +90,32 @@ extension Instance {
                 : TJCS_YCbCr.rawValue
         }
 
+        self.record(density: jfif)
         self.decodedProfile = try? ICCProfile.profile(in: bytes)
+    }
+
+    /// Records the density parameters a decode found.
+    ///
+    /// The fallback for a stream with no JFIF segment is the same 1×1 aspect
+    /// ratio libjpeg reports, so a caller reading the parameters after any
+    /// successful header call sees defined values either way.
+    func record(density jfif: JPEG.JFIF?) {
+        let jfif: JPEG.JFIF = jfif ?? .init(density: (1, 1), unit: nil)
+        self.parameters[TJPARAM_XDENSITY.id] = .init(jfif.density.x)
+        self.parameters[TJPARAM_YDENSITY.id] = .init(jfif.density.y)
+        switch jfif.unit {
+        case nil:               self.parameters[TJPARAM_DENSITYUNITS.id] = 0
+        case .inches?:          self.parameters[TJPARAM_DENSITYUNITS.id] = 1
+        case .centimeters?:     self.parameters[TJPARAM_DENSITYUNITS.id] = 2
+        }
+    }
+
+    /// The first JFIF segment of a decoded image's metadata, if any.
+    static func jfif(of metadata: [JPEG.Metadata]) -> JPEG.JFIF? {
+        for case .jfif(let jfif) in metadata {
+            return jfif
+        }
+        return nil
     }
 
     /// Decodes a JPEG and records what its header said.
@@ -119,6 +151,7 @@ extension Instance {
         self.parameters[TJPARAM_LOSSLESS.id] = 0
         self.parameters[TJPARAM_ARITHMETIC.id] =
             spectral.layout.process.coding == .arithmetic ? 1 : 0
+        self.record(density: Instance.jfif(of: spectral.metadata))
 
         // The reported dimensions are the JPEG's own, not the scaled output's:
         // a caller computes the latter with TJSCALED. Recorded before cropping
@@ -177,6 +210,7 @@ extension Instance {
         self.parameters[TJPARAM_LOSSLESS.id] = 0
         self.parameters[TJPARAM_ARITHMETIC.id] =
             spectral.layout.process.coding == .arithmetic ? 1 : 0
+        self.record(density: Instance.jfif(of: spectral.metadata))
 
         return spectral.decomposed()
     }

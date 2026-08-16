@@ -1,6 +1,32 @@
 import CTurboJPEG
 import JPEG
 
+extension Instance {
+    /// The metadata compression embeds: a JFIF built from the density
+    /// parameters, and the ICC profile chunks if one is set.
+    ///
+    /// The JFIF is constructed unconditionally rather than only when a density
+    /// parameter is set, because the parameter defaults serialize to exactly
+    /// the minimal segment the encoder writes on its own — so an untouched
+    /// handle produces byte-identical output either way.
+    var compressionMetadata: [JPEG.Metadata] {
+        let unit: JPEG.JFIF.Unit?
+        switch self.parameter(TJPARAM_DENSITYUNITS) {
+        case 1:     unit = .inches
+        case 2:     unit = .centimeters
+        default:    unit = nil
+        }
+        let jfif: JPEG.JFIF = .init(
+            density: (
+                x: .init(self.parameter(TJPARAM_XDENSITY, default: 1)),
+                y: .init(self.parameter(TJPARAM_YDENSITY, default: 1))
+            ),
+            unit: unit
+        )
+        return [.jfif(jfif)] + (self.iccProfile.map(ICCProfile.segments(of:)) ?? [])
+    }
+}
+
 @c @implementation
 public func tj3JPEGBufSize(_ width: Int32, _ height: Int32, _ jpegSubsamp: Int32) -> Int {
     guard width >= 1, height >= 1, let sampling: Subsampling = .init(jpegSubsamp) else {
@@ -173,7 +199,7 @@ public func tj3Compress8(
             restartInterval: restartInterval,
             progressive: instance.parameter(TJPARAM_PROGRESSIVE) != 0,
             arithmetic: instance.parameter(TJPARAM_ARITHMETIC) != 0,
-            metadata: instance.iccProfile.map(ICCProfile.segments(of:)) ?? []
+            metadata: instance.compressionMetadata
         )
         }
 

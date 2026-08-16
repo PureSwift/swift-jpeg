@@ -138,7 +138,8 @@ extension Instance {
                 try image.compress(
                     stream: &encoded,
                     quality: .init(self.parameter(TJPARAM_QUALITY, default: 95)),
-                    progressive: self.parameter(TJPARAM_PROGRESSIVE) != 0
+                    progressive: self.parameter(TJPARAM_PROGRESSIVE) != 0,
+                    metadata: self.compressionMetadata
                 )
             }
 
