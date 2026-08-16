@@ -320,21 +320,59 @@ extension JPEG.Data.Spectral {
         // for the reason the decoder's counterpart gives — and it matters slightly
         // more here, because this loop reads all 63 AC positions whether they are
         // zero or not, where the decoder only reads the ones a symbol names.
-        var run: Int = 0
-        try JPEG.zigzag.withUnsafeBufferPointer { (zigzag) throws(JPEG.Failure) in
+        // Which AC positions are nonzero, as a bitmask, before coding any of
+        // them.
+        //
+        // The loop this replaces tested every one of the 63 positions and
+        // branched on the answer. Building the mask is the same 63 tests with
+        // no branch — a compare into a bit, which the compiler emits as a
+        // set-if-zero and a shift — and the coding loop below then runs once
+        // per nonzero coefficient rather than once per position. Encode falls
+        // from 1612.9M instructions to 1576.2M, -2.27%, and 55.0 to 55.6
+        // Mpixel/s.
+        //
+        // It was written expecting much more, and the gap is the part worth
+        // recording. Under cachegrind's branch simulation this loop was 63% of
+        // every misprediction in the encoder, and removing it drops the
+        // simulated total by 60% — 5.95M to 2.35M — and the simulated rate
+        // from 2.6% to 1.1%. On a real Haswell that bought 1%, which is about
+        // what the instruction count alone predicts.
+        //
+        // So cachegrind's predictor is not this machine's. It models a simple
+        // two-level scheme; the hardware's is far better and was already
+        // getting this branch mostly right. The simulated misprediction counts
+        // in this codebase are worth reading as *an upper bound on what a
+        // weak predictor would cost*, not as time being spent — and a change
+        // justified by them alone should be measured on the clock before it is
+        // believed.
+        var mask: UInt64 = 0
+        JPEG.zigzag.withUnsafeBufferPointer { zigzag in
             for z: Int in 1 ..< 64 {
-                let value: Int = .init(coefficients[zigzag[z]])
+                let nonzero: UInt64 = coefficients[zigzag[z]] != 0 ? 1 : 0
+                mask |= nonzero &<< UInt64(z)
+            }
+        }
 
-                guard value != 0 else {
-                    run += 1
-                    continue
-                }
+        // The position the next run of zeros starts at. A set bit at `z` means
+        // the run before it is `z - next` long.
+        var next: Int = 1
+        try JPEG.zigzag.withUnsafeBufferPointer { (zigzag) throws(JPEG.Failure) in
+            while mask != 0 {
+                let z: Int = mask.trailingZeroBitCount
+                // Clearing the lowest set bit, which is what makes the loop
+                // advance to the next nonzero coefficient without walking the
+                // zeros between.
+                mask &= mask &- 1
+
+                var run: Int = z - next
+                next = z + 1
 
                 while run >= 16 {
                     try ac.encode(0xF0, to: &bits)
                     run -= 16
                 }
 
+                let value: Int = .init(coefficients[zigzag[z]])
                 let amplitude: (category: Int, bits: UInt16) =
                     JPEG.BitstreamWriter.amplitude(of: value)
                 guard amplitude.category <= 15 else {
@@ -345,14 +383,13 @@ extension JPEG.Data.Spectral {
                     to: &bits
                 )
                 bits.write(amplitude.bits, count: amplitude.category)
-                run = 0
             }
         }
 
         // A trailing run is not coded position by position: one end-of-block
         // symbol says the rest of the block is zero. This is where most of the
         // compression in a high-frequency-poor block comes from.
-        if run > 0 {
+        if next < 64 {
             try ac.encode(0x00, to: &bits)
         }
     }
