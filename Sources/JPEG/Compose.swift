@@ -77,6 +77,25 @@ extension JPEG.Data.Rectangular {
     /// last real sample rather than being left at zero, because a hard step to
     /// black at the edge costs real bits: the transform would have to encode a
     /// discontinuity that is not in the image.
+    ///
+    /// One plane at a time, which reads the interleaved image once per plane —
+    /// three passes over six megabytes on a megapixel image, and a stride of
+    /// three samples touches every cache line whichever component it is after,
+    /// so no pass reuses what the others fetched. Filling the planes a
+    /// horizontal band at a time instead was tried, with the column tables
+    /// built once ahead of the bands. It works: last-level read misses fall
+    /// 57%, 3.93M to 1.69M over ten encodes.
+    ///
+    /// It bought 0.75% — 56.05 to 56.47 Mpixel/s — against 0.82% more
+    /// instructions for the band bookkeeping. So the source reads are not what
+    /// this function is waiting on, and the banding was not kept: it costs a
+    /// file-scope type to carry the tables and a second loop nest, which is a
+    /// lot of structure for nothing measurable.
+    ///
+    /// Recorded because the cache figure is genuinely large and invites the
+    /// change. On a machine with less memory bandwidth than this one, or under
+    /// load, the trade may go the other way — but it should be measured there
+    /// rather than assumed from the miss count.
     public func subsampled() -> JPEG.Data.Planar<Format> {
         let scale: JPEG.Component.Sampling = self.layout.scale
         let stride: Int = self.layout.planes.count
