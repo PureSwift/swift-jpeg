@@ -153,10 +153,39 @@ extension JPEG.Data.Rectangular {
                                 // plane of an unsubsampled one. A strided read,
                                 // with the averaging gone rather than performed
                                 // over a box of one.
-                                var index: Int = y0 * self.width * stride + plane
+                                //
+                                // The mirror of the scatter in
+                                // ``JPEG/Data/Planar/interleaved()``, which is
+                                // strided on the other side, and it takes the
+                                // same treatment for the same reason: two
+                                // pointers walked forward rather than an index
+                                // recomputed, unrolled eight ways because the
+                                // body is one load and one store and the loop
+                                // around it was most of the cost. Eight and not
+                                // more, for the reason recorded there — past
+                                // that the instruction count keeps falling and
+                                // the wall clock does not.
+                                var source: UnsafePointer<UInt16> =
+                                    values.baseAddress! + (y0 * self.width * stride + plane)
+                                var destination: UnsafeMutablePointer<UInt16> =
+                                    samples.baseAddress! + base
+                                while x + 8 <= prefix {
+                                    destination[0] = source[0]
+                                    destination[1] = source[stride]
+                                    destination[2] = source[2 * stride]
+                                    destination[3] = source[3 * stride]
+                                    destination[4] = source[4 * stride]
+                                    destination[5] = source[5 * stride]
+                                    destination[6] = source[6 * stride]
+                                    destination[7] = source[7 * stride]
+                                    destination += 8
+                                    source += 8 * stride
+                                    x += 8
+                                }
                                 while x < prefix {
-                                    samples[base + x] = values[index]
-                                    index += stride
+                                    destination.pointee = source.pointee
+                                    destination += 1
+                                    source += stride
                                     x += 1
                                 }
                             } else if uniform == 2, y1 - y0 == 2 {
