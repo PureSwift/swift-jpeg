@@ -195,19 +195,49 @@ extension JPEG.Data.Rectangular {
                                 // rounding term and a shift — the division by
                                 // four the general loop cannot avoid is the
                                 // single most expensive instruction in it.
-                                var above: Int = y0 * self.width * stride + plane
-                                var below: Int = above + self.width * stride
-                                while x < prefix {
+                                //
+                                // Pointers rather than indices, and four
+                                // outputs per iteration, as the copy above and
+                                // its mirror in the decoder. The four sums are
+                                // independent, which is what lets a wide core
+                                // overlap them; one at a time behind a loop
+                                // test they were serialized on the counter.
+                                // Four rather than eight: with four loads and
+                                // an add tree per output the body is already
+                                // wide, and eight measured worse — 1744.7M
+                                // instructions for the whole encode against
+                                // 1740.7M — where the copies above and in the
+                                // decoder, whose bodies are a load and a store,
+                                // wanted eight.
+                                var above: UnsafePointer<UInt16> =
+                                    values.baseAddress! + (y0 * self.width * stride + plane)
+                                var below: UnsafePointer<UInt16> = above + self.width * stride
+                                var out: UnsafeMutablePointer<UInt16> = samples.baseAddress! + base
+                                let step: Int = 2 * stride
+
+                                @inline(__always)
+                                func box(_ i: Int) -> UInt16 {
                                     let total: Int32 =
-                                        .init(values[above])
-                                        + .init(values[above + stride])
-                                        + .init(values[below])
-                                        + .init(values[below + stride])
-                                    samples[base + x] = .init(
-                                        truncatingIfNeeded: (total + 2) >> 2
-                                    )
-                                    above += 2 * stride
-                                    below += 2 * stride
+                                        .init(above[i * step]) + .init(above[i * step + stride])
+                                        + .init(below[i * step]) + .init(below[i * step + stride])
+                                    return .init(truncatingIfNeeded: (total + 2) >> 2)
+                                }
+
+                                while x + 4 <= prefix {
+                                    out[0] = box(0)
+                                    out[1] = box(1)
+                                    out[2] = box(2)
+                                    out[3] = box(3)
+                                    out += 4
+                                    above += 4 * step
+                                    below += 4 * step
+                                    x += 4
+                                }
+                                while x < prefix {
+                                    out.pointee = box(0)
+                                    out += 1
+                                    above += step
+                                    below += step
                                     x += 1
                                 }
                             }
