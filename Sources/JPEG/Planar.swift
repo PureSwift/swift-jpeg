@@ -300,13 +300,50 @@ extension JPEG.Data.Spectral {
                             // indexed stores behind a loop whose length the
                             // optimizer cannot see.
                             let base: Int = by * n * extent + bx * n
-                            for row: Int in 0 ..< n {
-                                UnsafeMutableRawPointer(
-                                    destination.baseAddress! + base + row * extent
-                                ).copyMemory(
-                                    from: samples.baseAddress! + row * n,
-                                    byteCount: 2 * n
-                                )
+                            if n == 8 {
+                                // A full-size row is sixteen bytes, and
+                                // `copyMemory` of a length the compiler cannot
+                                // see calls libc for it. That is a call per
+                                // row and eight rows per block — 196,608 calls
+                                // to `memcpy` per megapixel image to move
+                                // sixteen bytes each. Naming the width makes
+                                // it one load and one store.
+                                //
+                                // Worth 4.45% of the decode's instructions,
+                                // 1136.9M to 1086.3M, and `memcpy` falls from
+                                // 26.4M instructions to 6.7M. On the clock it
+                                // is worth much less: over ten runs each the
+                                // best times tie, 71.34 against 71.16
+                                // Mpixel/s, and the medians differ by about
+                                // 2%. An out-of-order core hides most of a
+                                // call it can predict.
+                                //
+                                // Kept for the instruction count rather than
+                                // the clock, which is the right way round for
+                                // an engine that also builds for Embedded and
+                                // runs on cores that do not hide anything.
+                                //
+                                // Only the full size gets this; the reduced
+                                // scales keep the general copy, which is rare
+                                // enough not to matter and correct at every
+                                // width.
+                                for row: Int in 0 ..< 8 {
+                                    let value: SIMD8<UInt16> = UnsafeRawPointer(
+                                        samples.baseAddress! + row * 8
+                                    ).loadUnaligned(as: SIMD8<UInt16>.self)
+                                    UnsafeMutableRawPointer(
+                                        destination.baseAddress! + base + row * extent
+                                    ).storeBytes(of: value, as: SIMD8<UInt16>.self)
+                                }
+                            } else {
+                                for row: Int in 0 ..< n {
+                                    UnsafeMutableRawPointer(
+                                        destination.baseAddress! + base + row * extent
+                                    ).copyMemory(
+                                        from: samples.baseAddress! + row * n,
+                                        byteCount: 2 * n
+                                    )
+                                }
                             }
                         }
                     }
