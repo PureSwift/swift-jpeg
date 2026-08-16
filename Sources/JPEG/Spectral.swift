@@ -124,14 +124,17 @@ extension JPEG.Data.SpectralPlane {
     /// **7.1% worse** on a megapixel decode, 1283.7M instructions against
     /// 1198.2M.
     ///
-    /// The difference is what the callee can see. Rebasing hands the body a
-    /// buffer of exactly sixty-four elements starting at zero, and the
-    /// dequantize loop over it vectorizes; an index into the whole plane is an
-    /// address the optimizer cannot prove anything about, and the same loop
-    /// comes out scalar. The slice is not overhead here, it is the information.
+    /// Why is not established, and the first version of this note guessed
+    /// wrong: it said rebasing lets the dequantize loop vectorize. It does not.
+    /// The closure compiles to no vector instructions at all — checked by
+    /// disassembling it — and at about 3.4 instructions per coefficient it is
+    /// plainly scalar either way. Both forms are scalar; the hoisted one is
+    /// simply worse scalar code, by roughly five instructions per coefficient,
+    /// for a reason that has not been pinned down.
     ///
     /// So this is deliberate, and the number is here because the change is an
-    /// attractive one to make twice.
+    /// attractive one to make twice. The mechanism is left open on purpose
+    /// rather than filled in with a plausible story.
     func withBlock<T, E>(
         x: Int, y: Int, _ body: (UnsafeBufferPointer<Int16>) throws(E) -> T
     ) throws(E) -> T {
